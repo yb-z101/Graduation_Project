@@ -1,0 +1,12 @@
+# 后端核心框架
+fastapi                # 后端核心框架
+uvicorn                # FastAPI的运行服务器
+sqlalchemy             # ORM框架
+pymysql                # MySQL驱动（SQLAlchemy用）
+python-dotenv          # 环境变量管理（存密钥、数据库地址等）
+requests               # 调用大模型API需要
+cryptography         # 加密用户数据库密码（可选，今天可先不装）
+
+
+
+
