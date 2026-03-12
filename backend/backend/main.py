@@ -26,20 +26,28 @@ app = FastAPI(
         "use_local_assets": True  # 关键：使用本地Swagger资源，不依赖CDN
     }
 )
-# 新增：添加跨域中间件（解决前端联调+docs加载问题）
+
+# 优化：仅保留本机前端地址（纯本地开发专用，无多余配置）
+origins = [
+    "http://localhost:8080",   # 前端Vue开发环境（最核心）
+    "http://127.0.0.1:8080"    # 兼容本机IP形式的访问（可选但建议保留）
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 开发阶段允许所有来源
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=origins,     # 仅允许本机前端8080端口跨域（安全且够用）
+    allow_credentials=True,    # 允许前端携带Cookie/Token（本地调试常用）
+    allow_methods=["*"],       # 允许所有HTTP方法（GET/POST等）
+    allow_headers=["*"],       # 允许所有请求头（如Content-Type、Authorization）
 )
+
 # 新增：注册数据源路由（核心）
 app.include_router(datasource_router)
 # 在已有路由注册后添加
 app.include_router(upload_router)
 app.include_router(analysis_task_router)
 app.include_router(session_router)
+
 # 原有健康检查接口（保留，优化提示语）
 @app.get("/health")
 def health_check():
@@ -59,8 +67,6 @@ def test_db_connection(db: Session = Depends(get_db)):
 def test_llm(prompt: str = "你好，请介绍一下自己"):
     result = test_qwen_api(prompt)
     return {"status": "ok", "response": result}
-
-
 
 from app.core.session_manager import sessions
 
