@@ -1,14 +1,24 @@
-import { createStore } from 'vuex'
+import { defineStore } from 'pinia'
 
-export default createStore({
-  state: {
-  },
-  getters: {
-  },
-  mutations: {
-  },
+export const useSessionStore = defineStore('session', {
+  state: () => ({
+    sessionId: null,
+    filename: '',
+    previewData: [],
+    columns: []
+  }),
   actions: {
-  },
-  modules: {
+    setSession(data) {
+      this.sessionId = data.session_id
+      this.filename = data.filename
+      this.previewData = data.preview
+      this.columns = data.columns
+    },
+    clearSession() {
+      this.sessionId = null
+      this.filename = ''
+      this.previewData = []
+      this.columns = []
+    }
   }
 })
