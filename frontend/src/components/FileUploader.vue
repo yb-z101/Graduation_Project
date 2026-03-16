@@ -1,81 +1,100 @@
 <template>
-  <el-upload
-    :action="uploadUrl"
-    :show-file-list="false"
-    :before-upload="beforeUpload"
-    :on-success="handleSuccess"
-    :on-error="handleError"
-    accept=".csv,.xlsx,.xls"
-    class="file-uploader-comp"
-  >
-    <el-button type="primary" :icon="Upload">
-      选择文件 (CSV/Excel)
+  <div class="file-uploader">
+    <el-upload
+      class="upload-demo"
+      :action="uploadUrl"
+      :on-success="handleSuccess"
+      :on-error="handleError"
+      :before-upload="beforeUpload"
+      :auto-upload="false"
+      ref="upload"
+    >
+      <el-button type="primary">
+        <el-icon><Upload /></el-icon>
+        选择文件
+      </el-button>
+      <template #tip>
+        <div class="el-upload__tip">
+          请上传 CSV 或 Excel 文件
+        </div>
+      </template>
+    </el-upload>
+    <el-button type="success" @click="submitUpload" :disabled="!hasFile">
+      上传
     </el-button>
-    <template #tip>
-      <div class="el-upload__tip">
-        支持 .csv, .xlsx 文件，大小不超过 10MB
-      </div>
-    </template>
-  </el-upload>
+  </div>
 </template>
 
 <script setup>
+import { ref } from 'vue'
 import { Upload } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+import { uploadFile } from '@/api/upload'
 
-// 定义 emits，用于向父组件传递上传成功后的数据
-const emit = defineEmits(['file-uploaded'])
+const upload = ref(null)
+const hasFile = ref(false)
 
-// ⚠️ 重要：请根据您后端的实际接口地址修改此处
-// 如果是本地开发，通常配置在 vite.config.js 或 vue.config.js 的 proxy 中
-const uploadUrl = '/api/v1/upload' 
+const uploadUrl = '/api/v1/upload'
 
 const beforeUpload = (file) => {
-  // 1. 校验文件类型
-  const isValidType = file.name.endsWith('.csv') || 
-                      file.name.endsWith('.xlsx') || 
-                      file.name.endsWith('.xls')
+  const isCSV = file.type === 'text/csv' || file.name.endsWith('.csv')
+  const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls')
+  if (!isCSV && !isExcel) {
+    ElMessage.error('只能上传 CSV 或 Excel 文件!')
+    return false
+  }
+  hasFile.value = true
+  return false // 阻止自动上传
+}
+
+const submitUpload = async () => {
+  if (!upload.value) return
   
-  if (!isValidType) {
-    ElMessage.error('只能上传 CSV 或 Excel 文件！')
-    return false
+  const files = upload.value.uploadFiles
+  if (files.length === 0) {
+    ElMessage.warning('请先选择文件')
+    return
   }
-
-  // 2. 校验文件大小 (10MB)
-  const isLt10M = file.size / 1024 / 1024 < 10
-  if (!isLt10M) {
-    ElMessage.error('文件大小不能超过 10MB！')
-    return false
+  
+  const file = files[0].raw
+  try {
+    ElMessage.info('正在上传文件...')
+    const response = await uploadFile(file)
+    if (response.status === 'ok') {
+      ElMessage.success('文件上传成功')
+      // 触发上传成功事件，传递会话信息
+      emit('upload-success', response)
+      // 清空上传列表
+      upload.value.clearFiles()
+      hasFile.value = false
+    } else {
+      ElMessage.error(`上传失败：${response.message || '未知错误'}`)
+    }
+  } catch (error) {
+    ElMessage.error(`上传失败：${error.message || '网络错误'}`)
+    console.error('上传错误：', error)
   }
-
-  return true
 }
 
-const handleSuccess = (response, uploadFile) => {
-  // 假设后端返回格式为: { code: 200, data: { session_id, filename, preview_data, columns } }
-  // 请根据实际后端返回结构调整
-  if (response.code === 200 || response.status === 'success') {
-    ElMessage.success('文件上传成功，正在分析...')
-    // 将后端返回的数据传递给父组件 (Chat.vue)
-    emit('file-uploaded', response.data || response)
-  } else {
-    ElMessage.error(response.message || '上传失败')
-  }
+const handleSuccess = (response) => {
+  // 这个方法不会被调用，因为我们使用了手动上传
 }
 
-const handleError = (err) => {
-  console.error('Upload Error:', err)
-  ElMessage.error('网络错误，上传失败')
+const handleError = (error) => {
+  ElMessage.error('上传失败，请重试')
+  console.error('上传错误：', error)
 }
+
+// 定义事件
+const emit = defineEmits(['upload-success'])
 </script>
 
 <style scoped>
-.file-uploader-comp {
-  display: inline-block;
+.file-uploader {
+  margin: 20px 0;
 }
-.el-upload__tip {
-  margin-top: 5px;
-  font-size: 12px;
-  color: #909399;
+
+.upload-demo {
+  margin-right: 10px;
 }
 </style>

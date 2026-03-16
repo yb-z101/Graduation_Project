@@ -6,6 +6,7 @@ import io
 
 from app.core.session_manager import create_session, get_session, update_session_dataframe
 
+# 修改路由前缀，添加 /api/v1 前缀
 router = APIRouter(prefix="/api/v1/upload", tags=["文件上传"])
 
 def parse_csv_excel_from_bytes(content: bytes, filename: str) -> pd.DataFrame:
@@ -53,9 +54,11 @@ async def upload_file(
 
     session_data = get_session(session_id)
     return {
+        "status": "ok",
+        "message": "文件上传成功",
         "session_id": session_id,
         "filename": file.filename,
-        "preview": session_data["preview"],
+        "data": session_data["preview"],
         "columns": session_data["columns"],
         "row_count": session_data["row_count"]
     }
