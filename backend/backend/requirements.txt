@@ -6,7 +6,7 @@ pymysql                # MySQL驱动（SQLAlchemy用）
 python-dotenv          # 环境变量管理（存密钥、数据库地址等）
 requests               # 调用大模型API需要
 cryptography         # 加密用户数据库密码（可选，今天可先不装）
-
-
-
-
+langgraph             # LangGraph工作流管理框架
+langchain             # LangChain生态系统（LangGraph依赖）
+langchain_core        # LangChain核心库
+langchain_openai      # OpenAI接口（如果需要）

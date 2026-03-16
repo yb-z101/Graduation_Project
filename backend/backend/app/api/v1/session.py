@@ -11,8 +11,12 @@ from app.core.session_manager import get_session, update_session_dataframe, add_
 from app.models.models import ChatRecord, AnalysisTask
 from app.utils.safe_executor import execute_pandas_code
 from app.utils.llm_client import generate_clean_code, call_qwen
+from app.workflows.analysis_workflow import create_analysis_workflow, AnalysisState
 
 router = APIRouter(prefix="/api/v1/session", tags=["会话管理"])
+
+# 创建工作流实例
+analysis_workflow = create_analysis_workflow()
 
 
 @router.post("/clean")
@@ -130,4 +134,90 @@ result = df
             {"name": col, "type": str(result_df[col].dtype)}
             for col in result_df.columns
         ]
+    }
+
+
+@router.post("/send_message")
+async def send_message(
+        session_id: str = Form(...),
+        message: str = Form(...),
+        db: Session = Depends(get_db)
+):
+    """发送消息并处理"""
+    # 获取会话数据
+    session_data = get_session(session_id)
+    if not session_data:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    # 创建工作流状态
+    state = AnalysisState()
+    state.session_id = session_id
+    state.file_name = session_data["filename"]
+    state.data = session_data["dataframe"]
+    state.columns = session_data["columns"]
+    state.user_query = message
+    state.history = session_data.get("history", [])
+
+    # 执行工作流
+    result = await analysis_workflow.ainvoke(state)
+
+    # 更新会话历史
+    if not session_data.get("history"):
+        session_data["history"] = []
+    session_data["history"] = result.history
+    if result.analysis_result is not None:
+        session_data["last_result"] = result.analysis_result.to_dict()
+
+    # 保存聊天记录
+    # 创建分析任务
+    db_task = AnalysisTask(
+        task_name="对话分析任务",
+        source_id=None,
+        user_prompt=message,
+        generated_sql="",
+        sql_exec_result=json.dumps(result.analysis_result.to_dict() if result.analysis_result is not None else None),
+        llm_analysis=json.dumps({
+            "chart_option": result.chart_option,
+            "error": result.error
+        }),
+        task_status=2
+    )
+    db.add(db_task)
+    db.commit()
+    db.refresh(db_task)
+
+    # 记录对话历史
+    user_record = ChatRecord(
+        task_id=db_task.id,
+        role=1,
+        content=message,
+        create_time=datetime.now()
+    )
+    db.add(user_record)
+
+    assistant_content = result.error or "分析完成"
+    if result.chart_option:
+        assistant_content += "（已生成图表）"
+
+    assistant_record = ChatRecord(
+        task_id=db_task.id,
+        role=2,
+        content=assistant_content,
+        create_time=datetime.now()
+    )
+    db.add(assistant_record)
+    db.commit()
+
+    # 添加到内存历史
+    add_history(session_id, "user", message, {"task_id": db_task.id})
+    add_history(session_id, "assistant", assistant_content, {"task_id": db_task.id})
+
+    # 返回结果
+    return {
+        "status": "ok",
+        "message": "消息处理成功",
+        "task_id": db_task.id,
+        "result": result.analysis_result.to_dict() if result.analysis_result is not None else None,
+        "chart_option": result.chart_option,
+        "error": result.error
     }

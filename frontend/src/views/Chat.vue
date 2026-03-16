@@ -281,6 +281,10 @@ import DataChart from '../components/DataChart.vue'
 import { useSessionStore } from '../store/sessionStore'
 import { useChatStore } from '../store/chatStore'
 
+// 导入 API 模块
+import { sendMessage as sendMessageApi } from '../api/session'
+import { uploadFile } from '../api/upload'
+
 const sessionStore = useSessionStore()
 const chatStore = useChatStore()
 
@@ -353,6 +357,7 @@ const clearChat = () => {
 }
 
 const loadSession = (session) => {
+  // 注意：实际场景中可能需要从后端加载历史消息
   sessionStore.setCurrentSession(session.id, session.fileName, [], [])
   messages.value = [{
     role: 'ai',
@@ -367,6 +372,7 @@ const quickAsk = (text) => {
   sendMessage()
 }
 
+// 修改后的文件选择与上传逻辑
 const handleFileSelect = (type) => {
   showUploadMenu.value = false
   
@@ -379,20 +385,35 @@ const handleFileSelect = (type) => {
   const input = document.createElement('input')
   input.type = 'file'
   input.accept = fileTypes[type]
-  input.onchange = (e) => {
+  input.onchange = async (e) => {
     const file = e.target.files[0]
     if (file) {
-      handleFileUploaded({
-        fileName: file.name,
-        previewData: [],
-        columns: []
-      })
+      try {
+        showMessage('正在上传文件...', 'info')
+        // 调用真实上传 API
+        const response = await uploadFile(file)
+        
+        if (response.status === 'ok') {
+          handleFileUploaded({
+            fileName: file.name,
+            previewData: response.data || [],
+            columns: response.columns || []
+          })
+        } else {
+          showMessage(`上传失败：${response.message}`, 'error')
+        }
+      } catch (error) {
+        showMessage('文件上传失败', 'error')
+        console.error('上传错误：', error)
+      }
     }
   }
   input.click()
 }
 
+// 处理上传成功后的逻辑
 const handleFileUploaded = async (responseData) => {
+  // 注意：这里仍然使用生成的 mockSessionId，实际项目中 sessionId 通常由上传接口返回
   const mockSessionId = 'sess_' + Date.now()
   const fileName = responseData.fileName || 'uploaded_data.csv'
   
@@ -408,6 +429,7 @@ const handleFileUploaded = async (responseData) => {
   showMessage('文件上传成功', 'success')
 }
 
+// 修改后的发送消息逻辑
 const sendMessage = async () => {
   const text = userInput.value.trim()
   if (!text) return
@@ -417,31 +439,43 @@ const sendMessage = async () => {
     return
   }
 
+  // 添加用户消息到列表
   messages.value.push({ role: 'user', content: text })
   userInput.value = ''
   chatStore.setLoading(true)
   scrollToBottom()
 
-  setTimeout(() => {
-    const mockResponse = {
+  try {
+    // 调用真实发送消息 API
+    const response = await sendMessageApi(sessionStore.currentSessionId, text)
+    
+    if (response.status === 'ok') {
+      const aiMessage = {
+        role: 'ai',
+        type: response.chart_option ? 'chart' : 'text',
+        content: response.error || '分析完成',
+        chartOption: response.chart_option,
+        textPart: response.error || `分析完成，共 ${response.result?.length || 0} 条结果`
+      }
+      messages.value.push(aiMessage)
+    } else {
+      messages.value.push({
+        role: 'ai',
+        type: 'text',
+        content: `错误：${response.message || '处理失败'}`
+      })
+    }
+  } catch (error) {
+    showMessage('消息发送失败', 'error')
+    messages.value.push({
       role: 'ai',
       type: 'text',
-      content: `收到指令："${text}"。正在使用 ${currentModel.value.name} 分析数据...`
-    }
-    if (text.includes('图表') || text.includes('趋势')) {
-      mockResponse.type = 'chart'
-      mockResponse.title = '分析结果'
-      mockResponse.chartOption = {
-        xAxis: { type: 'category', data: ['A', 'B', 'C', 'D'] },
-        yAxis: { type: 'value' },
-        series: [{ data: [10, 20, 30, 40], type: 'bar' }]
-      }
-    }
-    
-    messages.value.push(mockResponse)
+      content: `错误：${error.message}`
+    })
+  } finally {
     chatStore.setLoading(false)
     nextTick(() => scrollToBottom())
-  }, 1000)
+  }
 }
 
 const scrollToBottom = () => {
