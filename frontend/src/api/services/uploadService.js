@@ -31,6 +31,25 @@ const uploadService = {
       //   console.log('上传进度:', percentCompleted);
       // }
     });
+  },
+  
+  /**
+   * 预览文件结构
+   * @param {File} file - 要预览的文件
+   * @returns {Promise} - 返回 API 响应
+   */
+  previewFile: (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    return apiClient({
+      url: '/v1/preview',
+      method: 'post',
+      data: formData,
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
+    });
   }
 };
 

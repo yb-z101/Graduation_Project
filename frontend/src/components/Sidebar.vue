@@ -5,6 +5,15 @@
       <el-icon :class="{ 'flipped': collapsed }"><Fold /></el-icon>
     </div>
 
+    <!-- 项目标题 -->
+    <div class="sidebar-title" v-show="!collapsed">
+      <div class="title-main">
+        <span class="title-zh">智析</span>
+        <span class="title-en">zhixi</span>
+      </div>
+      <div class="title-sub">智能数据分析系统</div>
+    </div>
+
     <div class="sidebar-top" v-show="!collapsed">
       <el-button class="new-chat-btn" @click="$emit('new-chat')">
         <el-icon><Plus /></el-icon>
@@ -191,8 +200,58 @@ const themeAccent = computed(() => props.theme === 'dark' ? '#6366f1' : '#4f46e5
   transform: rotate(180deg);
 }
 
+.sidebar-title {
+  padding: 20px 16px 16px;
+  text-align: center;
+}
+
+.title-main {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.title-zh {
+  font-size: 24px;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--accent-color), #a855f7);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-shadow: 0 2px 4px rgba(99, 102, 241, 0.3);
+  position: relative;
+  display: inline-block;
+}
+
+.title-zh::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent-color), transparent);
+  border-radius: 1px;
+}
+
+.title-en {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  font-style: italic;
+  letter-spacing: 0.5px;
+}
+
+.title-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+}
+
 .sidebar-top {
-  padding: 16px;
+  padding: 0 16px 16px;
 }
 
 .new-chat-btn {

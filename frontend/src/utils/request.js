@@ -3,7 +3,7 @@ import axios from 'axios';
 // 创建axios实例，指向你的FastAPI后端
 const service = axios.create({
   baseURL: '/api', // 使用代理配置
-  timeout: 10000, // 请求超时时间
+  timeout: 30000, // 请求超时时间
   withCredentials: true // 允许携带Cookie
 });
 

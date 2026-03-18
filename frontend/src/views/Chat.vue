@@ -15,7 +15,7 @@
     />
 
     <!-- 右侧主区域 -->
-    <main class="main-content">
+    <main class="main-content" :class="{ 'with-preview': showPreview, 'with-database': showDatabaseSidebar }">
       <!-- 顶部栏 -->
       <TopBar 
         :model-list="modelList"
@@ -76,21 +76,199 @@
         </div>
       </div>
 
+
+
       <!-- 底部输入区 -->
       <ChatInput 
         :loading="chatStore.isLoading"
         @send-message="handleSendMessage"
         @file-select="handleFileSelect"
         @quick-ask="quickAsk"
+        @preview-file="handlePreviewFile"
+        @send-with-files="handleSendWithFiles"
+        @database-connect="showDatabaseSidebar = true"
         ref="chatInputRef"
       />
+
+      <!-- 数据库连接对话框 -->
+      <DatabaseConnection 
+        :visible="showDatabaseConnectionDialog"
+        @connection-success="handleDatabaseConnection"
+        @query-result="handleDatabaseQueryResult"
+        @close="showDatabaseConnectionDialog = false"
+      />
     </main>
+
+    <!-- 文件预览侧边栏 -->
+    <div v-if="showPreview" class="preview-sidebar" :class="themeClass">
+      <div class="preview-header">
+        <h3>{{ previewFile?.name }}</h3>
+        <el-button 
+          type="text" 
+          size="small"
+          @click="closePreview"
+        >
+          <el-icon><Close /></el-icon>
+        </el-button>
+      </div>
+      <div class="preview-content">
+        <div v-if="previewLoading" class="preview-loading">
+          <el-skeleton animated :rows="10" />
+        </div>
+        <div v-else-if="previewError" class="preview-error">
+          {{ previewError }}
+        </div>
+        <div v-else-if="previewData">
+          <div v-if="previewData.file_type === 'data'" class="data-preview">
+            <div class="preview-section">
+              <h4>文件信息</h4>
+              <p>行数：{{ previewData.structure.row_count }}</p>
+              <p>列数：{{ previewData.structure.columns.length }}</p>
+            </div>
+            <div class="preview-section">
+              <h4>列信息</h4>
+              <ul class="column-list">
+                <li v-for="(col, index) in previewData.structure.columns" :key="index">
+                  {{ col.name }} ({{ col.type }})
+                </li>
+              </ul>
+            </div>
+            <div class="preview-section">
+              <h4>前5行数据</h4>
+              <div class="preview-table">
+                <div class="table-header">
+                  <span v-for="(col, index) in previewData.structure.columns" :key="index">{{ col.name }}</span>
+                </div>
+                <div 
+                  v-for="(row, rowIndex) in previewData.structure.preview_data" 
+                  :key="rowIndex"
+                  class="table-row"
+                >
+                  <span v-for="(col, colIndex) in previewData.structure.columns" :key="colIndex">
+                    {{ row[col.name] }}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div v-else-if="previewData.file_type === 'sql'" class="sql-preview">
+            <div class="preview-section">
+              <h4>SQL内容</h4>
+              <pre class="sql-content">{{ previewData.structure.content }}</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 数据库侧边栏 -->
+    <div v-if="showDatabaseSidebar" class="database-sidebar" :class="themeClass">
+      <div class="database-header">
+        <h3>数据库连接</h3>
+        <el-button 
+          type="text" 
+          size="small"
+          @click="closeDatabaseSidebar"
+        >
+          <el-icon><Close /></el-icon>
+        </el-button>
+      </div>
+      <div class="database-content">
+        <!-- 保存的连接列表 -->
+        <div v-if="savedConnections.length > 0" class="saved-connections">
+          <h4>快速连接</h4>
+          <div class="connection-list">
+            <div 
+              v-for="(connection, index) in savedConnections" 
+              :key="index"
+              class="connection-card"
+            >
+              <div class="connection-header">
+                <div class="connection-name">{{ connection.database }}</div>
+                <div class="connection-detail">{{ connection.host }}:{{ connection.port }} · {{ connection.username }}</div>
+              </div>
+              <div class="connection-actions">
+                <el-button 
+                  type="primary" 
+                  size="small" 
+                  @click="quickConnect(connection)"
+                  :disabled="activeDatabaseConnection && activeDatabaseConnection.database === connection.database && activeDatabaseConnection.host === connection.host"
+                  class="connect-button"
+                >
+                  连接
+                </el-button>
+                <el-button 
+                  type="danger" 
+                  size="small" 
+                  @click="deleteSavedConnection(index)"
+                  class="delete-button"
+                >
+                  删除
+                </el-button>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div v-if="activeDatabaseConnection" class="connection-status">
+          <div class="connection-info">
+            <el-icon><Check /></el-icon>
+            <span>已连接到: {{ activeDatabaseConnection.database }}@{{ activeDatabaseConnection.host }}:{{ activeDatabaseConnection.port }}</span>
+            <el-button type="text" size="small" @click="disconnectDatabase">断开</el-button>
+          </div>
+
+          <!-- 表结构浏览 -->
+          <div v-if="databaseTables.length > 0" class="tables-list">
+            <h4>数据库表结构</h4>
+            <div class="table-list">
+              <el-collapse class="table-collapse">
+                <el-collapse-item
+                  v-for="table in databaseTables"
+                  :key="table.name"
+                  :title="table.name"
+                  class="table-collapse-item"
+                >
+                  <div class="table-content">
+                    <el-table :data="table.columns" style="width: 100%" class="column-table">
+                      <el-table-column prop="name" label="列名" width="120">
+                        <template #header>
+                          <span class="column-header">列名</span>
+                        </template>
+                      </el-table-column>
+                      <el-table-column prop="type" label="类型" width="150">
+                        <template #header>
+                          <span class="column-header">类型</span>
+                        </template>
+                      </el-table-column>
+                      <el-table-column prop="nullable" label="可空" width="80">
+                        <template #header>
+                          <span class="column-header">可空</span>
+                        </template>
+                        <template #default="scope">
+                          <el-tag size="small" :type="scope.row.nullable ? 'warning' : 'success'" class="nullable-tag">
+                            {{ scope.row.nullable ? '是' : '否' }}
+                          </el-tag>
+                        </template>
+                      </el-table-column>
+                    </el-table>
+                  </div>
+                </el-collapse-item>
+              </el-collapse>
+            </div>
+          </div>
+        </div>
+        <div v-else class="no-connection">
+          <p>未连接数据库</p>
+          <el-button type="primary" @click="showDatabaseConnectionDialog = true">连接数据库</el-button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
 import { ref, nextTick, computed, onMounted, watch } from 'vue'
-import { DataAnalysis } from '@element-plus/icons-vue'
+import { DataAnalysis, Close } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
 import DataTable from '../components/DataTable.vue'
@@ -98,12 +276,13 @@ import DataChart from '../components/DataChart.vue'
 import Sidebar from '../components/Sidebar.vue'
 import TopBar from '../components/TopBar.vue'
 import ChatInput from '../components/ChatInput.vue'
+import DatabaseConnection from '../components/DatabaseConnection.vue'
 
 import { useSessionStore } from '../store/index'
 import { useChatStore } from '../store/chatStore'
 
 // 导入 API 模块
-import { sessionService, uploadService, chatService } from '../api/services'
+import { sessionService, uploadService, chatService, databaseService } from '../api/services'
 
 const sessionStore = useSessionStore()
 const chatStore = useChatStore()
@@ -148,9 +327,168 @@ const dfDictToRecords = (result) => {
   return { records: [], columns: [] }
 }
 
+// 为数据库查询结果生成图表配置
+const generateChartFromQueryResult = (data, columns, query) => {
+  if (!data || data.length === 0 || !columns || columns.length === 0) {
+    return null
+  }
+
+  // 分析数据类型
+  const numericColumns = []
+  const categoryColumns = []
+  
+  // 简单判断列类型
+  for (const col of columns) {
+    const values = data.map(row => row[col])
+    const isNumeric = values.every(val => !isNaN(val) && val !== null && val !== undefined)
+    if (isNumeric) {
+      numericColumns.push(col)
+    } else {
+      categoryColumns.push(col)
+    }
+  }
+
+  // 确定图表类型
+  let chartType = 'table' // 默认使用表格
+  if (query.includes('折线图')) {
+    chartType = 'line'
+  } else if (query.includes('柱状图') || query.includes('条形图')) {
+    chartType = 'bar'
+  } else if (query.includes('饼图')) {
+    chartType = 'pie'
+  } else if (query.includes('散点图')) {
+    chartType = 'scatter'
+  }
+
+  // 如果用户没有指定图表类型，默认使用表格
+  if (chartType === 'table') {
+    return null // 表格由其他逻辑处理
+  }
+
+  // 生成图表配置
+  if (chartType === 'line') {
+    // 折线图
+    if (numericColumns.length === 0) return null
+    
+    const xAxisData = data.map(row => {
+      // 优先使用姓名或类别列作为x轴
+      const nameCol = categoryColumns.find(col => col.includes('姓名') || col.includes('name') || col.includes('Name'))
+      return nameCol ? row[nameCol] : data.indexOf(row)
+    })
+    
+    return {
+      title: { text: query.substring(0, 30) },
+      tooltip: { trigger: 'axis' },
+      xAxis: { type: 'category', data: xAxisData, name: '姓名' },
+      yAxis: { type: 'value', name: numericColumns[0] },
+      series: numericColumns.map(col => {
+        const seriesData = data.map(row => row[col])
+        return {
+          name: col,
+          type: 'line',
+          data: seriesData,
+          smooth: true,
+          label: {
+            show: true,
+            position: 'top',
+            formatter: (params) => {
+              // 尝试显示姓名
+              const nameCol = categoryColumns.find(col => col.includes('姓名') || col.includes('name') || col.includes('Name'))
+              return nameCol ? data[params.dataIndex][nameCol] : ''
+            }
+          }
+        }
+      }),
+      grid: { containLabel: true, left: '10%', right: '10%', top: '15%', bottom: '15%' }
+    }
+  } else if (chartType === 'bar') {
+    // 柱状图
+    if (numericColumns.length === 0) return null
+    
+    const xAxisData = data.map(row => {
+      const nameCol = categoryColumns.find(col => col.includes('姓名') || col.includes('name') || col.includes('Name'))
+      return nameCol ? row[nameCol] : data.indexOf(row)
+    })
+    
+    return {
+      title: { text: query.substring(0, 30) },
+      tooltip: { trigger: 'axis' },
+      xAxis: { type: 'category', data: xAxisData, name: '姓名' },
+      yAxis: { type: 'value', name: numericColumns[0] },
+      series: numericColumns.map(col => {
+        const seriesData = data.map(row => row[col])
+        return {
+          name: col,
+          type: 'bar',
+          data: seriesData,
+          label: {
+            show: true,
+            position: 'top',
+            formatter: '{c}'
+          }
+        }
+      }),
+      grid: { containLabel: true, left: '10%', right: '10%', top: '15%', bottom: '15%' }
+    }
+  } else if (chartType === 'pie') {
+    // 饼图
+    if (numericColumns.length === 0 || categoryColumns.length === 0) return null
+    
+    const categoryCol = categoryColumns[0]
+    const valueCol = numericColumns[0]
+    
+    const seriesData = data.map(row => ({
+      name: row[categoryCol],
+      value: row[valueCol]
+    }))
+    
+    return {
+      title: { text: query.substring(0, 30) },
+      tooltip: { trigger: 'item', formatter: '{a} <br/>{b}: {c} ({d}%)' },
+      legend: { orient: 'vertical', left: 'left', data: data.map(row => row[categoryCol]) },
+      series: [{
+        name: valueCol,
+        type: 'pie',
+        radius: '50%',
+        data: seriesData,
+        emphasis: {
+          itemStyle: {
+            shadowBlur: 10,
+            shadowOffsetX: 0,
+            shadowColor: 'rgba(0, 0, 0, 0.5)'
+          }
+        },
+        label: {
+          show: true,
+          formatter: '{b}: {c} ({d}%)'
+        }
+      }]
+    }
+  }
+
+  return null
+}
+
 const messages = ref([])
 const chatWindowRef = ref(null)
 const sidebarCollapsed = ref(false)
+
+// 文件预览相关状态
+const showPreview = ref(false)
+const previewFile = ref(null)
+const previewData = ref(null)
+const previewLoading = ref(false)
+const previewError = ref('')
+
+// 数据库连接对话框状态
+const showDatabaseConnectionDialog = ref(false)
+const activeDatabaseConnection = ref(null)
+const databaseConnectionId = ref(null)
+const showDatabaseSidebar = ref(false)
+const databaseTables = ref([])
+
+// 保存的数据库连接
+const savedConnections = ref([])
 
 // 单个提示框管理
 let messageTimer = null
@@ -199,6 +537,7 @@ const startNewChat = () => {
   if (chatInputRef.value) {
     chatInputRef.value.clearInput()
   }
+  closePreview()
 }
 
 const refreshSessionHistory = async () => {
@@ -270,6 +609,7 @@ const handleClearAllSessions = async () => {
 const loadSession = (session) => {
   sessionStore.setCurrentSession(session.id, session.fileName, [], [])
   messages.value = []
+  closePreview()
 
   // 从后端恢复该会话的完整消息
   sessionService.getSessionMessages(session.id).then((resp) => {
@@ -328,37 +668,144 @@ const quickAsk = (text) => {
   }
 }
 
-// 修改后的文件选择与上传逻辑
-const handleFileSelect = (type) => {
-  const fileTypes = {
-    csv: '.csv',
-    sql: '.sql',
-    excel: '.xlsx,.xls'
+// 处理文件选择
+const handleFileSelect = async (type, file) => {
+  try {
+    // 后台预览文件，不显示给用户，只是为了获取文件结构
+    await uploadService.previewFile(file)
+  } catch (error) {
+    console.error('文件预览失败:', error)
   }
+}
+
+// 处理文件预览
+const handlePreviewFile = async (file) => {
+  previewFile.value = file
+  showPreview.value = true
+  previewLoading.value = true
+  previewError.value = ''
   
-  const input = document.createElement('input')
-  input.type = 'file'
-  input.accept = fileTypes[type]
-  input.onchange = async (e) => {
-    const file = e.target.files[0]
-    if (file) {
-      try {
-        showMessage('正在上传文件...', 'info')
-        // 调用真实上传 API
-        const response = await uploadService.uploadFile(file)
-        
-        if (response.status === 'ok') {
-          handleFileUploaded(response)
-        } else {
-          showMessage(`上传失败：${response.message}`, 'error')
-        }
-      } catch (error) {
-        showMessage('文件上传失败', 'error')
-        console.error('上传错误：', error)
+  try {
+    const previewResponse = await uploadService.previewFile(file)
+    
+    if (previewResponse.status === 'ok') {
+      previewData.value = previewResponse
+    } else {
+      previewError.value = `预览失败：${previewResponse.message}`
+    }
+  } catch (error) {
+    previewError.value = `预览失败：${error.message}`
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+// 关闭预览
+const closePreview = () => {
+  showPreview.value = false
+  previewFile.value = null
+  previewData.value = null
+  previewLoading.value = false
+  previewError.value = ''
+}
+
+// 处理发送带文件的消息
+const handleSendWithFiles = async (text, files) => {
+  const trimmedText = text.trim()
+  
+  // 添加用户消息到列表
+  messages.value.push({ role: 'user', content: trimmedText || '上传了文件' })
+  chatStore.setLoading(true)
+  scrollToBottom()
+
+  try {
+    // 逐个上传文件
+    for (const file of files) {
+      showMessage(`正在上传文件：${file.name}`, 'info')
+      const uploadResponse = await uploadService.uploadFile(file)
+      
+      if (uploadResponse.status === 'ok') {
+        handleFileUploaded(uploadResponse)
+      } else {
+        showMessage(`上传失败：${uploadResponse.message}`, 'error')
       }
     }
+    
+    // 如果有文本消息，发送消息
+    if (trimmedText) {
+      if (sessionStore.currentSessionId) {
+        // 有会话ID，调用分析API
+        const response = await sessionService.sendMessage(sessionStore.currentSessionId, trimmedText)
+        
+        if (response.status === 'ok') {
+          // 1) 先展示文本总结（优先 summary，其次 error）
+          messages.value.push({
+            role: 'ai',
+            type: 'text',
+            content: response.analysis_summary || response.error || '分析完成'
+          })
+
+          // 2) 有结果就展示表格
+          if (response.result) {
+            const { records, columns } = dfDictToRecords(response.result)
+            if (records.length && columns.length) {
+              messages.value.push({
+                role: 'ai',
+                type: 'table',
+                title: '分析结果表格',
+                data: records,
+                columns
+              })
+            }
+          }
+
+          // 3) 有图表配置就展示图表
+          if (response.chart_option) {
+            messages.value.push({
+              role: 'ai',
+              type: 'chart',
+              title: '分析结果图表',
+              chartOption: response.chart_option
+            })
+          }
+      } else {
+        messages.value.push({
+          role: 'ai',
+          type: 'text',
+          content: `错误：${response.message || '处理失败'}`
+        })
+      }
+      } else {
+        // 没有会话ID，调用普通聊天API
+        const response = await chatService.sendChatMessage(trimmedText)
+        
+        if (response.status === 'ok') {
+          const aiMessage = {
+            role: 'ai',
+            type: 'text',
+            content: response.response
+          }
+          messages.value.push(aiMessage)
+        } else {
+          messages.value.push({
+            role: 'ai',
+            type: 'text',
+            content: `错误：${response.message || '处理失败'}`
+          })
+        }
+      }
+    }
+  } catch (error) {
+    showMessage('消息发送失败', 'error')
+    messages.value.push({
+      role: 'ai',
+      type: 'text',
+      content: `错误：${error.message}`
+    })
+  } finally {
+    chatStore.setLoading(false)
+    nextTick(() => scrollToBottom())
   }
-  input.click()
 }
 
 // 处理上传成功后的逻辑
@@ -370,10 +817,12 @@ const handleFileUploaded = async (responseData) => {
   sessionStore.setCurrentSession(sessionId, fileName, responseData.data || [], responseData.columns || []);
   sessionStore.addSession({ id: sessionId, fileName, timestamp: new Date() });
 
+  // 检查是否为SQL文件
+  const isSqlFile = fileName.toLowerCase().endsWith('.sql');
   messages.value.push({
     role: 'ai',
     type: 'text',
-    content: `文件《${fileName}》已上传。共 ${responseData.row_count} 条数据。`
+    content: isSqlFile ? `文件《${fileName}》已上传。` : `文件《${fileName}》已上传。共 ${responseData.row_count} 条数据。`
   });
   scrollToBottom();
   showMessage('文件上传成功', 'success');
@@ -393,12 +842,99 @@ const handleSendMessage = async (text) => {
   scrollToBottom()
 
   try {
-    if (!sessionStore.currentSessionId && messages.value.length === 1) {
+    if (activeDatabaseConnection.value) {
+      // 已连接数据库，使用Chat to SQL功能
+      
+      // 检查用户是否请求图表
+      const wantsChart = trimmedText.includes('图表') || trimmedText.includes('折线图') || trimmedText.includes('柱状图') || trimmedText.includes('饼图') || trimmedText.includes('可视化');
+      
+      // 优化Chat to SQL提示，明确告诉模型用户可能需要图表
+      const chatToSqlResponse = await databaseService.chatToSql(databaseConnectionId.value, trimmedText);
+      
+      if (chatToSqlResponse.status === 'ok') {
+        const sql = chatToSqlResponse.sql;
+        
+        // 显示生成的SQL语句
+        messages.value.push({
+          role: 'ai',
+          type: 'text',
+          content: `生成的SQL语句：\n${sql}`
+        });
+        
+        // 执行SQL查询
+        const queryResponse = await databaseService.executeQuery(databaseConnectionId.value, sql);
+        
+        if (queryResponse.status === 'ok') {
+          messages.value.push({
+            role: 'ai',
+            type: 'text',
+            content: `查询执行成功，返回 ${queryResponse.row_count} 行数据`
+          });
+          
+          if (queryResponse.data && queryResponse.data.length > 0) {
+            messages.value.push({
+              role: 'ai',
+              type: 'table',
+              title: '查询结果',
+              data: queryResponse.data,
+              columns: queryResponse.columns
+            });
+            
+            // 如果用户请求了图表，尝试生成
+            if (wantsChart) {
+              try {
+                // 构建图表配置
+                const chartOption = generateChartFromQueryResult(queryResponse.data, queryResponse.columns, trimmedText);
+                if (chartOption) {
+                  messages.value.push({
+                    role: 'ai',
+                    type: 'chart',
+                    title: '分析结果图表',
+                    chartOption: chartOption
+                  });
+                } else {
+                  messages.value.push({
+                    role: 'ai',
+                    type: 'text',
+                    content: '无法为当前查询结果生成图表，请确保查询包含数值类型的列。'
+                  });
+                }
+              } catch (error) {
+                console.error('生成图表失败:', error);
+                messages.value.push({
+                  role: 'ai',
+                  type: 'text',
+                  content: '生成图表时出错，请稍后再试。'
+                });
+              }
+            }
+          } else {
+            messages.value.push({
+              role: 'ai',
+              type: 'text',
+              content: '查询返回了空结果。'
+            });
+          }
+        } else {
+          messages.value.push({
+            role: 'ai',
+            type: 'text',
+            content: `SQL执行失败：${queryResponse.message}`
+          });
+        }
+      } else {
+        messages.value.push({
+          role: 'ai',
+          type: 'text',
+          content: `生成SQL失败：${chatToSqlResponse.message}`
+        });
+      }
+    } else if (!sessionStore.currentSessionId && messages.value.length === 1) {
       // 第一次发送消息且没有上传文件，提示用户上传文件
       const aiMessage = {
         role: 'ai',
         type: 'text',
-        content: '本系统旨在进行智能数据分析，请您先上传文件。'
+        content: '本系统旨在进行智能数据分析，请您先上传文件或连接数据库。'
       }
       messages.value.push(aiMessage)
     } else if (sessionStore.currentSessionId) {
@@ -483,11 +1019,94 @@ const scrollToBottom = () => {
   })
 }
 
+// 处理数据库连接成功
+const handleDatabaseConnection = async (connectionInfo) => {
+  activeDatabaseConnection.value = connectionInfo.connectionInfo
+  databaseConnectionId.value = connectionInfo.connectionId
+  
+  // 保存连接信息
+  saveConnection(connectionInfo.connectionInfo)
+  
+  // 加载数据库表结构
+  try {
+    const tablesResponse = await databaseService.getTables(connectionInfo.connectionId)
+    if (tablesResponse.status === 'ok') {
+      databaseTables.value = tablesResponse.tables
+    }
+  } catch (error) {
+    console.error('获取表结构失败:', error)
+  }
+  
+  // 显示数据库侧边栏
+  showDatabaseSidebar.value = true
+  
+  messages.value.push({
+    role: 'ai',
+    type: 'text',
+    content: `成功连接到数据库：${connectionInfo.connectionInfo.database}@${connectionInfo.connectionInfo.host}:${connectionInfo.connectionInfo.port}`
+  })
+  scrollToBottom()
+}
+
+// 关闭数据库侧边栏
+const closeDatabaseSidebar = () => {
+  showDatabaseSidebar.value = false
+}
+
+// 断开数据库连接
+const disconnectDatabase = async () => {
+  if (!databaseConnectionId.value) return
+  
+  try {
+    const response = await databaseService.disconnectDatabase(databaseConnectionId.value)
+    if (response.status === 'ok') {
+      activeDatabaseConnection.value = null
+      databaseConnectionId.value = null
+      databaseTables.value = []
+      showDatabaseSidebar.value = false
+      messages.value.push({
+        role: 'ai',
+        type: 'text',
+        content: '数据库连接已断开'
+      })
+      ElMessage.success('连接已断开')
+      scrollToBottom()
+    } else {
+      ElMessage.error(response.message)
+    }
+  } catch (error) {
+    ElMessage.error('断开连接失败：' + error.message)
+  }
+}
+
+// 处理数据库查询结果
+const handleDatabaseQueryResult = (result) => {
+  messages.value.push({
+    role: 'ai',
+    type: 'text',
+    content: `查询执行成功，返回 ${result.row_count} 行数据`
+  })
+  
+  if (result.data && result.data.length > 0) {
+    messages.value.push({
+      role: 'ai',
+      type: 'table',
+      title: '查询结果',
+      data: result.data,
+      columns: result.columns
+    })
+  }
+  scrollToBottom()
+}
+
 onMounted(async () => {
   const savedTheme = localStorage.getItem('chat-theme')
   if (savedTheme) {
     theme.value = savedTheme
   }
+  
+  // 加载保存的数据库连接
+  loadSavedConnections()
   
   // 初始化会话存储，加载历史会话
   sessionStore.init()
@@ -496,6 +1115,89 @@ onMounted(async () => {
   await refreshSessionHistory()
 })
 
+// 加载保存的数据库连接
+const loadSavedConnections = () => {
+  try {
+    const saved = localStorage.getItem('savedDatabaseConnections')
+    if (saved) {
+      const connections = JSON.parse(saved)
+      // 确保port字段是数字类型
+      savedConnections.value = connections.map(conn => ({
+        ...conn,
+        port: Number(conn.port)
+      }))
+    }
+  } catch (error) {
+    console.error('加载保存的数据库连接失败:', error)
+  }
+}
+
+// 保存数据库连接
+const saveConnection = (connectionInfo) => {
+  try {
+    // 检查是否已存在相同的连接
+    const existingIndex = savedConnections.value.findIndex(conn => 
+      conn.host === connectionInfo.host && 
+      conn.port === connectionInfo.port && 
+      conn.database === connectionInfo.database
+    )
+    
+    if (existingIndex === -1) {
+      // 添加新连接
+      savedConnections.value.push({
+        ...connectionInfo,
+        savedAt: new Date().toISOString()
+      })
+      
+      // 保存到localStorage
+      localStorage.setItem('savedDatabaseConnections', JSON.stringify(savedConnections.value))
+      showMessage('数据库连接已保存', 'success')
+    }
+  } catch (error) {
+    console.error('保存数据库连接失败:', error)
+  }
+}
+
+// 删除保存的数据库连接
+const deleteSavedConnection = (index) => {
+  try {
+    savedConnections.value.splice(index, 1)
+    localStorage.setItem('savedDatabaseConnections', JSON.stringify(savedConnections.value))
+    showMessage('数据库连接已删除', 'success')
+  } catch (error) {
+    console.error('删除数据库连接失败:', error)
+  }
+}
+
+// 快速连接数据库
+const quickConnect = (connection) => {
+  showMessage(`正在连接数据库：${connection.database}@${connection.host}:${connection.port}`, 'info')
+  
+  // 直接使用保存的连接信息连接数据库
+  const connectionData = {
+    host: connection.host,
+    port: connection.port,
+    username: connection.username,
+    password: connection.password,
+    database: connection.database
+  };
+  
+  databaseService.connectDatabase(connectionData).then(response => {
+    if (response.status === 'ok') {
+      handleDatabaseConnection({
+        connectionId: response.connection_id,
+        connectionInfo: connectionData
+      })
+      showMessage('数据库连接成功', 'success')
+    } else {
+      showMessage(`连接失败：${response.message}`, 'error')
+    }
+  }).catch(error => {
+    console.error('连接失败:', error);
+    showMessage(`连接失败：${error.message}`, 'error')
+  })
+}
+
 watch(theme, (newVal) => {
   localStorage.setItem('chat-theme', newVal)
 })
@@ -503,18 +1205,22 @@ watch(theme, (newVal) => {
 
 <style scoped>
 .theme-dark {
-  --bg-primary: #0f172a;
-  --bg-secondary: #1e293b;
-  --bg-hover: #334155;
-  --bg-input: #1e293b;
-  --text-primary: #f8fafc;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
-  --border-color: #334155;
+  --bg-primary: #0a0a0a;
+  --bg-secondary: #121212;
+  --bg-hover: #1e1e1e;
+  --bg-input: #121212;
+  --text-primary: #ffffff;
+  --text-secondary: #b0b0b0;
+  --text-muted: #808080;
+  --border-color: #2a2a2a;
   --accent-color: #6366f1;
   --accent-hover: #4f46e5;
-  --message-user-bg: #334155;
-  --shadow-color: rgba(0, 0, 0, 0.3);
+  --message-user-bg: #1e1e1e;
+  --shadow-color: rgba(0, 0, 0, 0.5);
+  --card-bg: #1a1a1a;
+  --card-border: #2a2a2a;
+  --gradient-primary: linear-gradient(135deg, #6366f1, #8b5cf6);
+  --gradient-secondary: linear-gradient(135deg, #4f46e5, #7c3aed);
 }
 
 .theme-light {
@@ -549,6 +1255,29 @@ watch(theme, (newVal) => {
   position: relative;
   background-color: var(--bg-primary);
   transition: all 0.3s ease;
+}
+
+/* 数据库连接状态 */
+.database-connection-status {
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  padding: 12px 24px;
+}
+
+.database-connection-status .connection-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.database-connection-status .el-icon {
+  color: #10b981;
+}
+
+.database-connection-status .el-button {
+  margin-left: auto;
 }
 
 /* 聊天滚动区 */
@@ -725,5 +1454,642 @@ watch(theme, (newVal) => {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
+}
+
+/* 主内容区带预览时的样式 */
+.main-content.with-preview {
+  flex: 1;
+  margin-right: 400px;
+}
+
+/* 文件预览侧边栏 */
+.preview-sidebar {
+  position: fixed;
+  right: 0;
+  top: 0;
+  width: 400px;
+  height: 100vh;
+  background-color: var(--bg-secondary);
+  border-left: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  z-index: 1000;
+  box-shadow: -4px 0 12px var(--shadow-color);
+  transition: all 0.3s ease;
+}
+
+/* 数据库侧边栏 */
+.database-sidebar {
+  position: fixed;
+  right: 0;
+  top: 0;
+  width: 400px;
+  height: 100vh;
+  background-color: var(--bg-secondary);
+  border-left: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  z-index: 1000;
+  box-shadow: -4px 0 12px var(--shadow-color);
+  transition: all 0.3s ease;
+}
+
+.preview-header,
+.database-header {
+  padding: 20px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.preview-header h3,
+.database-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.preview-content,
+.database-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+/* 数据库连接状态 */
+.connection-status {
+  margin-bottom: 20px;
+}
+
+.connection-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-size: 14px;
+  flex-wrap: wrap;
+}
+
+.connection-info .el-icon {
+  color: #10b981;
+}
+
+.connection-info .el-button {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* 保存的连接列表 */
+.saved-connections {
+  margin-bottom: 20px;
+}
+
+.saved-connections h4 {
+  margin: 0 0 16px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.saved-connections h4::before {
+  content: '';
+  width: 4px;
+  height: 16px;
+  background: var(--accent-color);
+  border-radius: 2px;
+}
+
+.connection-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.connection-card {
+  background: var(--card-bg);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 4px 12px var(--shadow-color);
+  border: 1px solid var(--card-border);
+  transition: all 0.3s ease;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.connection-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4px;
+  height: 100%;
+  background: var(--gradient-primary);
+  border-radius: 12px 0 0 12px;
+}
+
+.connection-card:hover {
+  box-shadow: 0 8px 20px var(--shadow-color);
+  transform: translateY(-2px);
+  border-color: var(--accent-color);
+  background: linear-gradient(135deg, var(--card-bg), #1e1e2e);
+}
+
+.connection-card:hover .connection-name {
+  background: var(--gradient-primary);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.connection-header {
+  flex: 1;
+  min-width: 0;
+}
+
+.connection-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.connection-detail {
+  font-size: 14px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.connection-actions {
+  display: flex;
+  gap: 10px;
+  margin-left: 16px;
+}
+
+.connect-button {
+  border-radius: 6px;
+  transition: all 0.3s ease;
+  background: linear-gradient(135deg, #3b82f6, #2563eb) !important;
+  border: none !important;
+  color: white !important;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3);
+}
+
+.connect-button::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  transition: left 0.6s ease;
+}
+
+.connect-button:hover::before {
+  left: 100%;
+}
+
+.connect-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.4);
+}
+
+.delete-button {
+  border-radius: 6px;
+  transition: all 0.3s ease;
+  background: #ef4444 !important;
+  border: none !important;
+  color: white !important;
+  position: relative;
+  overflow: hidden;
+}
+
+.delete-button::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  transition: left 0.6s ease;
+}
+
+.delete-button:hover::before {
+  left: 100%;
+}
+
+.delete-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+}
+
+.connect-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+  background: var(--border-color) !important;
+  color: var(--text-muted) !important;
+}
+
+/* 数据库表结构 */
+.tables-list {
+  margin-bottom: 20px;
+}
+
+.tables-list h4 {
+  margin: 0 0 16px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tables-list h4::before {
+  content: '';
+  width: 4px;
+  height: 16px;
+  background: var(--accent-color);
+  border-radius: 2px;
+}
+
+.table-list {
+  background: var(--card-bg);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 4px 12px var(--shadow-color);
+  border: 1px solid var(--card-border);
+  position: relative;
+  overflow: hidden;
+}
+
+.table-list::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: var(--gradient-primary);
+  border-radius: 12px 12px 0 0;
+}
+
+.table-collapse {
+  border: none;
+}
+
+.table-collapse-item {
+  border: 1px solid var(--card-border) !important;
+  border-radius: 8px !important;
+  margin-bottom: 12px !important;
+  overflow: hidden;
+  transition: all 0.3s ease;
+  position: relative;
+}
+
+.table-collapse-item::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4px;
+  height: 100%;
+  background: var(--gradient-secondary);
+  border-radius: 8px 0 0 8px;
+}
+
+.table-collapse-item:hover {
+  border-color: var(--accent-color) !important;
+  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.2) !important;
+  transform: translateY(-1px);
+}
+
+.table-collapse-item .el-collapse-item__header {
+  background: var(--bg-hover) !important;
+  border: none !important;
+  padding: 12px 16px !important;
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  color: var(--text-primary) !important;
+  transition: all 0.3s ease;
+  padding-left: 30px !important;
+  position: relative;
+  z-index: 1;
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  text-align: center !important;
+  width: 100% !important;
+  height: 44px !important;
+  box-sizing: border-box !important;
+}
+
+/* 确保表名称不被左侧装饰条遮挡 */
+.table-collapse-item .el-collapse-item__header .el-collapse-item__arrow {
+  margin-left: auto !important;
+  z-index: 2 !important;
+}
+
+/* 确保数据库侧边栏在深色模式下背景是黑色 */
+.theme-dark .database-sidebar {
+  background-color: #0a0a0a !important;
+}
+
+.theme-dark .database-content {
+  background-color: #0a0a0a !important;
+}
+
+.theme-dark .table-list {
+  background: #121212 !important;
+  border-color: #2a2a2a !important;
+}
+
+.theme-dark .table-collapse-item {
+  border-color: #2a2a2a !important;
+}
+
+.theme-dark .table-collapse-item .el-collapse-item__header {
+  background: #1e1e1e !important;
+}
+
+.theme-dark .table-content {
+  background: #121212 !important;
+}
+
+.theme-dark .column-table {
+  background: #121212 !important;
+}
+
+.theme-dark .column-table th {
+  background: #1e1e1e !important;
+}
+
+.theme-dark .column-table tr {
+  background: #121212 !important;
+}
+
+.theme-dark .column-table tr:hover {
+  background: #1e1e1e !important;
+}
+
+.table-collapse-item .el-collapse-item__header .el-collapse-item__content {
+  background: var(--card-bg) !important;
+}
+
+/* 确保表格内容区域背景也是黑色 */
+.table-content {
+  background: var(--card-bg) !important;
+}
+
+.column-table {
+  background: var(--card-bg) !important;
+}
+
+.column-table th {
+  background: var(--bg-hover) !important;
+}
+
+.column-table tr {
+  background: var(--card-bg) !important;
+}
+
+.column-table tr:hover {
+  background: var(--bg-hover) !important;
+}
+
+.table-collapse-item .el-collapse-item__header:hover {
+  background: var(--card-bg) !important;
+  color: var(--accent-color) !important;
+}
+
+.table-collapse-item .el-collapse-item__content {
+  padding: 0 !important;
+  border-top: 1px solid var(--border-color) !important;
+}
+
+.table-content {
+  padding: 16px;
+}
+
+.column-table {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.column-table th {
+  background: var(--bg-hover) !important;
+  border-bottom: 1px solid var(--border-color) !important;
+  color: var(--text-primary) !important;
+  font-weight: 500 !important;
+}
+
+.column-table td {
+  border-bottom: 1px solid var(--border-color) !important;
+  color: var(--text-secondary) !important;
+}
+
+.column-table tr:hover {
+  background: var(--bg-hover) !important;
+}
+
+.column-header {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.nullable-tag {
+  border-radius: 12px !important;
+  font-size: 12px !important;
+  padding: 2px 8px !important;
+}
+
+/* 确保表格在侧边栏中正确显示 */
+.column-table {
+  width: 100% !important;
+}
+
+.column-table th {
+  white-space: nowrap;
+}
+
+.column-table td {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 无连接状态 */
+.no-connection {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  gap: 16px;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.no-connection p {
+  margin: 0;
+}
+
+/* 主内容区带侧边栏时的样式 */
+.main-content.with-preview,
+.main-content.with-database {
+  flex: 1;
+  margin-right: 400px;
+}
+
+.preview-loading {
+  padding: 20px 0;
+}
+
+.preview-error {
+  color: #ef4444;
+  padding: 20px 0;
+}
+
+.preview-section {
+  margin-bottom: 24px;
+}
+
+.preview-section h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.preview-section h5 {
+  margin: 8px 0 8px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.preview-section p {
+  margin: 4px 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.column-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0;
+}
+
+.column-list li {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+  padding-left: 16px;
+  position: relative;
+}
+
+.column-list li::before {
+  content: "•";
+  position: absolute;
+  left: 0;
+  color: var(--accent-color);
+}
+
+/* 预览表格 */
+.preview-table {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 12px;
+}
+
+.table-header {
+  display: flex;
+  background-color: var(--bg-hover);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.table-header span {
+  flex: 1;
+  padding: 8px;
+  font-weight: 600;
+  color: var(--text-primary);
+  border-right: 1px solid var(--border-color);
+}
+
+.table-header span:last-child {
+  border-right: none;
+}
+
+.table-row {
+  display: flex;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.table-row:last-child {
+  border-bottom: none;
+}
+
+.table-row span {
+  flex: 1;
+  padding: 8px;
+  color: var(--text-secondary);
+  border-right: 1px solid var(--border-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.table-row span:last-child {
+  border-right: none;
+}
+
+/* SQL内容样式 */
+.sql-content {
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 16px;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+/* 响应式调整 */
+@media (max-width: 1200px) {
+  .main-content.with-preview {
+    margin-right: 300px;
+  }
+  
+  .preview-sidebar {
+    width: 300px;
+  }
 }
 </style>

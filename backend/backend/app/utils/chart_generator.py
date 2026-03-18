@@ -25,6 +25,10 @@ def generate_chart_config(df: pd.DataFrame, query: str) -> Dict[str, Any]:
     # 根据查询内容和数据特点选择图表类型
     chart_type = determine_chart_type(query, df, numeric_cols, category_cols, date_cols)
     
+    # 如果用户没有指定图表类型，默认使用表格，不生成图表
+    if chart_type == 'table':
+        return {}
+    
     # 生成对应类型的图表配置
     if chart_type == 'pie':
         return generate_pie_chart(df, query, category_cols, numeric_cols)
@@ -37,7 +41,7 @@ def generate_chart_config(df: pd.DataFrame, query: str) -> Dict[str, Any]:
     elif chart_type == 'bar':
         return generate_bar_chart(df, query, category_cols, numeric_cols)
     else:
-        return generate_default_chart(df, query, numeric_cols, category_cols)
+        return {}
 
 
 def determine_chart_type(query: str, df: pd.DataFrame, numeric_cols: List[str], category_cols: List[str], date_cols: List[str]) -> str:
@@ -47,33 +51,36 @@ def determine_chart_type(query: str, df: pd.DataFrame, numeric_cols: List[str], 
     query_lower = query.lower()
     
     # 根据查询关键词确定图表类型
-    if any(word in query_lower for word in ['比例', '占比', '百分比', 'pie']):
+    if any(word in query_lower for word in ['饼图', 'pie']):
         return 'pie'
-    elif any(word in query_lower for word in ['散点', 'scatter', '分布']):
+    elif any(word in query_lower for word in ['散点图', 'scatter']):
         return 'scatter'
-    elif any(word in query_lower for word in ['雷达', 'radar', '综合']):
+    elif any(word in query_lower for word in ['雷达图', 'radar']):
         return 'radar'
-    elif any(word in query_lower for word in ['趋势', '变化', '时间', 'line']):
+    elif any(word in query_lower for word in ['折线图', 'line']):
         return 'line'
-    elif any(word in query_lower for word in ['对比', '比较', 'bar']):
+    elif any(word in query_lower for word in ['柱状图', '条形图', 'bar']):
         return 'bar'
     
-    # 根据数据特点确定图表类型
-    if date_cols and numeric_cols:
-        return 'line'
-    elif category_cols and numeric_cols and len(category_cols) == 1 and len(numeric_cols) == 1:
-        if len(df) <= 10:
-            return 'bar'
-        else:
-            return 'line'
-    elif category_cols and numeric_cols and len(df[category_cols[0]].unique()) <= 8:
-        return 'pie'
-    elif len(numeric_cols) >= 2:
-        return 'scatter'
-    elif len(numeric_cols) >= 3:
-        return 'radar'
+    # 如果用户没有指定图表类型，默认使用表格
+    return 'table'
     
-    return 'bar'
+    # 根据数据特点确定图表类型（如果需要默认图表类型）
+    # if date_cols and numeric_cols:
+    #     return 'line'
+    # elif category_cols and numeric_cols and len(category_cols) == 1 and len(numeric_cols) == 1:
+    #     if len(df) <= 10:
+    #         return 'bar'
+    #     else:
+    #         return 'line'
+    # elif category_cols and numeric_cols and len(df[category_cols[0]].unique()) <= 8:
+    #     return 'pie'
+    # elif len(numeric_cols) >= 2:
+    #     return 'scatter'
+    # elif len(numeric_cols) >= 3:
+    #     return 'radar'
+    # 
+    # return 'bar'
 
 def generate_pie_chart(df: pd.DataFrame, query: str, category_cols: List[str], numeric_cols: List[str]) -> Dict[str, Any]:
     """
@@ -185,17 +192,38 @@ def generate_line_chart(df: pd.DataFrame, query: str, date_cols: List[str], nume
     else:
         x_data = df.index.tolist()
     
+    # 检查是否有姓名列
+    name_col = None
+    if '姓名' in df.columns:
+        name_col = '姓名'
+    elif 'name' in df.columns:
+        name_col = 'name'
+    
+    series = []
+    for col in numeric_cols:
+        series_item = {
+            "name": col,
+            "type": "line",
+            "data": df[col].tolist(),
+            "smooth": True
+        }
+        
+        # 如果有姓名列，添加标注
+        if name_col:
+            series_item["label"] = {
+                "show": True,
+                "position": "top",
+                "formatter": lambda params, name_data=df[name_col].tolist(): name_data[params.dataIndex]
+            }
+        
+        series.append(series_item)
+    
     return {
         "title": {"text": query[:30] + "..." if query else "数据分析结果"},
         "tooltip": {"trigger": "axis"},
         "xAxis": {"type": "category", "data": x_data, "name": x_col if 'x_col' in locals() else "索引"},
         "yAxis": {"type": "value"},
-        "series": [{
-            "name": col,
-            "type": "line",
-            "data": df[col].tolist(),
-            "smooth": True
-        } for col in numeric_cols],
+        "series": series,
         "grid": {"containLabel": True}
     }
 

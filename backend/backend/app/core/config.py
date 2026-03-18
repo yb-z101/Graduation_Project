@@ -47,7 +47,9 @@ class AppSettings(BaseSettings):
         "http://localhost:8081",
         "http://127.0.0.1:8081",
         "http://localhost:8083",
-        "http://127.0.0.1:8083"
+        "http://127.0.0.1:8083",
+        "http://localhost:8085",
+        "http://127.0.0.1:8085"
     ]
 
 

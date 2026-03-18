@@ -195,7 +195,8 @@ async def send_message(session_id: str, message: str, db: Session) -> Dict[str, 
         "data": session_data["dataframe"],
         "columns": session_data["columns"],
         "user_query": message,
-        "history": session_data.get("history", [])
+        "history": session_data.get("history", []),
+        "sql_content": session_data.get("sql_content")
     }
 
     # 执行工作流
@@ -213,12 +214,20 @@ async def send_message(session_id: str, message: str, db: Session) -> Dict[str, 
     analysis_repository = AnalysisRepository(db)
     session_repository = SessionRepository(db)
     
+    # 处理 analysis_result 为 None 的情况
+    analysis_result_dict = None
+    if result.get("analysis_result") is not None:
+        try:
+            analysis_result_dict = result.get("analysis_result").to_dict()
+        except:
+            analysis_result_dict = None
+    
     db_task = AnalysisTask(
         task_name="对话分析任务",
         source_id=None,
         user_prompt=message,
         generated_sql="",
-        sql_exec_result=json.dumps(result.get("analysis_result").to_dict() if result.get("analysis_result") is not None else None),
+        sql_exec_result=json.dumps(analysis_result_dict),
         llm_analysis=json.dumps({
             "chart_option": result.get("chart_option"),
             "error": result.get("error")
@@ -263,7 +272,7 @@ async def send_message(session_id: str, message: str, db: Session) -> Dict[str, 
             "task_id": db_task.id,
             "type": "analysis",
             "analysis_summary": result.get("analysis_summary"),
-            "result": result.get("analysis_result").to_dict() if result.get("analysis_result") is not None else None,
+            "result": analysis_result_dict,
             "chart_option": result.get("chart_option")
         }, ensure_ascii=False)
     ))
@@ -277,7 +286,7 @@ async def send_message(session_id: str, message: str, db: Session) -> Dict[str, 
         "status": "ok",
         "message": "消息处理成功",
         "task_id": db_task.id,
-        "result": result.get("analysis_result").to_dict() if result.get("analysis_result") is not None else None,
+        "result": analysis_result_dict,
         "chart_option": result.get("chart_option"),
         "error": result.get("error"),
         "analysis_summary": result.get("analysis_summary")

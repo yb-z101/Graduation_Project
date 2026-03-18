@@ -28,70 +28,128 @@ def parse_csv_excel_from_bytes(content: bytes, filename: str) -> pd.DataFrame:
         raise ValueError("不支持的文件格式，请上传 CSV 或 Excel 文件")
 
 
+def parse_sql_from_bytes(content: bytes, filename: str) -> str:
+    """解析 SQL 文件内容（bytes）"""
+    ext = os.path.splitext(filename)[1].lower()
+    if ext == '.sql':
+        try:
+            return content.decode('utf-8')
+        except UnicodeDecodeError:
+            try:
+                return content.decode('gbk')
+            except UnicodeDecodeError:
+                return content.decode('utf-8')
+    else:
+        raise ValueError("不支持的文件格式，请上传 SQL 文件")
+
+
 def handle_file_upload(file_content: bytes, filename: str, session_id: Optional[str], db: Session):
     """处理文件上传逻辑"""
     ext = os.path.splitext(filename)[1].lower()
 
-    # 如果上传的是 SQL 文件，返回友好提示
-    if ext == '.sql':
-        raise HTTPException(
-            status_code=400,
-            detail="SQL 文件解析功能已移除，请上传 CSV 或 Excel 文件"
-        )
-
-    try:
-        df = parse_csv_excel_from_bytes(file_content, filename)
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        error_detail = str(e) if str(e) else "未知错误"
-        raise HTTPException(status_code=400, detail=f"文件解析失败：{error_detail}")
-
     session_repository = SessionRepository(db)
-    # 处理会话
-    if session_id and get_session(session_id):
-        if not update_session_dataframe(session_id, df):
-            raise HTTPException(status_code=404, detail="会话不存在")
+    
+    if ext == '.sql':
+        # 处理 SQL 文件
+        try:
+            sql_content = parse_sql_from_bytes(file_content, filename)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            error_detail = str(e) if str(e) else "未知错误"
+            raise HTTPException(status_code=400, detail=f"SQL 文件解析失败：{error_detail}")
         
-        # 更新数据库中的会话信息
-        db_session = session_repository.get_session_by_id(session_id)
-        if db_session:
-            db_session.row_count = len(df)
-            session_repository.update_session(db_session)
-    else:
-        session_id = create_session(df, filename)
+        # 为 SQL 文件创建会话
+        # 由于 SQL 文件不是表格数据，我们创建一个空的 DataFrame 作为占位符
+        df = pd.DataFrame()
+        session_id = create_session(df, filename, sql_content)
         
         # 在数据库中创建会话记录
-        session_data = get_session(session_id)
         new_session = SessionModel(
             id=session_id,
             filename=filename,
-            row_count=session_data["row_count"],
-            columns=json.dumps(session_data["columns"]),
-            preview_data=json.dumps(session_data["preview"])
+            row_count=0,  # SQL 文件没有行数
+            columns=json.dumps([]),  # SQL 文件没有列
+            preview_data=json.dumps({})
         )
         session_repository.create_session(new_session)
-
+        
         # 写入一条系统消息，便于“最近会话”恢复上下文
         session_repository.create_session_message(SessionMessage(
             session_id=session_id,
             role=3,
-            content=f"已上传文件：{filename}（{session_data['row_count']} 行）",
+            content=f"已上传文件：{filename}",
             extra=json.dumps({
                 "type": "upload",
                 "filename": filename,
-                "row_count": session_data["row_count"],
-                "columns": session_data["columns"]
+                "sql_content": sql_content[:1000]  # 只存储前 1000 个字符，避免存储过多内容
             }, ensure_ascii=False)
         ))
+        
+        # 返回 SQL 文件上传成功的响应
+        return {
+            "status": "ok",
+            "message": "SQL 文件上传成功",
+            "session_id": session_id,
+            "filename": filename,
+            "data": {},
+            "columns": [],
+            "row_count": 0
+        }
+    else:
+        # 处理 CSV 或 Excel 文件
+        try:
+            df = parse_csv_excel_from_bytes(file_content, filename)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            error_detail = str(e) if str(e) else "未知错误"
+            raise HTTPException(status_code=400, detail=f"文件解析失败：{error_detail}")
 
-    session_data = get_session(session_id)
-    return {
-        "status": "ok",
-        "message": "文件上传成功",
-        "session_id": session_id,
-        "filename": filename,
-        "data": session_data["preview"],
-        "columns": session_data["columns"],
-        "row_count": session_data["row_count"]
-    }
+        # 处理会话
+        if session_id and get_session(session_id):
+            if not update_session_dataframe(session_id, df):
+                raise HTTPException(status_code=404, detail="会话不存在")
+            
+            # 更新数据库中的会话信息
+            db_session = session_repository.get_session_by_id(session_id)
+            if db_session:
+                db_session.row_count = len(df)
+                session_repository.update_session(db_session)
+        else:
+            session_id = create_session(df, filename)
+            
+            # 在数据库中创建会话记录
+            session_data = get_session(session_id)
+            new_session = SessionModel(
+                id=session_id,
+                filename=filename,
+                row_count=session_data["row_count"],
+                columns=json.dumps(session_data["columns"]),
+                preview_data=json.dumps(session_data["preview"])
+            )
+            session_repository.create_session(new_session)
+
+            # 写入一条系统消息，便于“最近会话”恢复上下文
+            session_repository.create_session_message(SessionMessage(
+                session_id=session_id,
+                role=3,
+                content=f"已上传文件：{filename}（{session_data['row_count']} 行）",
+                extra=json.dumps({
+                    "type": "upload",
+                    "filename": filename,
+                    "row_count": session_data["row_count"],
+                    "columns": session_data["columns"]
+                }, ensure_ascii=False)
+            ))
+
+        session_data = get_session(session_id)
+        return {
+            "status": "ok",
+            "message": "文件上传成功",
+            "session_id": session_id,
+            "filename": filename,
+            "data": session_data["preview"],
+            "columns": session_data["columns"],
+            "row_count": session_data["row_count"]
+        }
