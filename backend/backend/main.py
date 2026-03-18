@@ -5,48 +5,43 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 # 新增：建表相关导入（核心）
 from app.core.database import Base, engine
-from app.models.models import DataSource, AnalysisTask, ChatRecord, RAGIndex
+from app.models.models import DataSource, AnalysisTask, ChatRecord, RAGIndex, Session as UploadSession
 # 原有导入（保留）
 from app.core.database import get_db
 from app.utils.llm_client import test_qwen_api
-from app.api.v1.analysis_task import router as analysis_task_router
-from app.api.v1.datasource import router as datasource_router
-from app.api.v1.upload import router as upload_router
-from app.api.v1.session import router as session_router
-# 新增：首次启动创建所有表（执行一次即可，后续注释）
-# 说明：这行代码只需要执行1次，表创建成功后，注释掉即可，避免重复建表
-#Base.metadata.create_all(bind=engine)
+from app.core.config import settings
+
 
 # 原有FastAPI实例创建（保留，标题可优化）
 app = FastAPI(
-    title="对话式数据分析系统",
-    version="1.0",
+    title=settings.app.name,
+    version=settings.app.version,
     docs_url="/docs",
     swagger_ui_init_oauth={
         "use_local_assets": True  # 关键：使用本地Swagger资源，不依赖CDN
     }
 )
 
-# 优化：仅保留本机前端地址（纯本地开发专用，无多余配置）
-origins = [
-    "http://localhost:8080",   # 前端Vue开发环境（最核心）
-    "http://127.0.0.1:8080"    # 兼容本机IP形式的访问（可选但建议保留）
-]
+# 启动时自动建表（开发/答辩演示用）
+# 说明：如果你后续接入 Alembic 迁移，可替换为迁移脚本；create_all 重复执行是安全的（只会补缺失表）。
+@app.on_event("startup")
+def _create_tables_on_startup():
+    Base.metadata.create_all(bind=engine)
 
+# 使用配置文件中的 CORS 配置
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,     # 仅允许本机前端8080端口跨域（安全且够用）
+    allow_origins=settings.app.cors_origins,     # 仅允许配置的前端地址跨域
     allow_credentials=True,    # 允许前端携带Cookie/Token（本地调试常用）
     allow_methods=["*"],       # 允许所有HTTP方法（GET/POST等）
     allow_headers=["*"],       # 允许所有请求头（如Content-Type、Authorization）
+    expose_headers=["*"],      # 暴露所有响应头
+    max_age=86400,             # 预检请求的缓存时间
 )
 
-# 新增：注册数据源路由（核心）
-app.include_router(datasource_router)
-# 在已有路由注册后添加
-app.include_router(upload_router)
-app.include_router(analysis_task_router)
-app.include_router(session_router)
+# 注册API路由
+from app.api import api_router
+app.include_router(api_router, prefix="/api")
 
 # 原有健康检查接口（保留，优化提示语）
 @app.get("/health")

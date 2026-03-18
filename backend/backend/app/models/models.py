@@ -92,7 +92,44 @@ class ChatRecord(Base):
     # 关联关系
     analysis_task = relationship("AnalysisTask", back_populates="chat_records")
 
-# 4. RAG向量索引表（毕设“创新点”核心表）
+# 4. 会话表（存储用户上传文件的会话信息）
+class Session(Base):
+    __tablename__ = "session"
+    id = Column(String(100), primary_key=True, comment="会话ID")
+    filename = Column(String(200), nullable=False, comment="文件名")
+    row_count = Column(Integer, nullable=False, comment="数据行数")
+    columns = Column(Text, nullable=False, comment="列信息（JSON格式）")
+    preview_data = Column(Text, nullable=True, comment="预览数据（JSON格式）")
+    # 扩展字段
+    is_deleted = Column(Boolean, default=False, comment="软删除标记")
+    create_time = Column(DateTime, default=datetime.now, comment="创建时间")
+    update_time = Column(DateTime, default=datetime.now, onupdate=datetime.now, comment="更新时间")
+
+    # 索引设计
+    __table_args__ = (
+        Index("idx_is_deleted", "is_deleted"),
+        Index("idx_create_time", "create_time"),
+    )
+
+# 5. 会话消息表（用于持久化“最近会话”的完整对话上下文）
+class SessionMessage(Base):
+    __tablename__ = "session_message"
+    id = Column(Integer, primary_key=True, autoincrement=True, comment="消息主键ID")
+    session_id = Column(String(100), ForeignKey("session.id", ondelete="CASCADE"), nullable=False, comment="会话ID")
+    role = Column(Integer, nullable=False, comment="角色：1-用户 2-助手 3-系统")
+    content = Column(Text, nullable=False, comment="消息内容")
+    extra = Column(Text, nullable=True, comment="扩展信息（JSON格式，如结果表/图表配置等）")
+    is_deleted = Column(Boolean, default=False, comment="软删除标记")
+    create_time = Column(DateTime, default=datetime.now, comment="创建时间")
+
+    __table_args__ = (
+        Index("idx_session_id", "session_id"),
+        Index("idx_session_role", "role"),
+        Index("idx_session_create_time", "create_time"),
+        Index("idx_session_msg_is_deleted", "is_deleted"),
+    )
+
+# 5. RAG向量索引表（毕设“创新点”核心表）
 class RAGIndex(Base):
     __tablename__ = "rag_index"
     id = Column(Integer, primary_key=True, autoincrement=True, comment="索引主键ID")

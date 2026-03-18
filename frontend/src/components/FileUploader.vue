@@ -29,7 +29,7 @@
 import { ref } from 'vue'
 import { Upload } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { uploadFile } from '@/api/upload'
+import { uploadService } from '@/api/services'
 
 const upload = ref(null)
 const hasFile = ref(false)
@@ -57,23 +57,23 @@ const submitUpload = async () => {
   }
   
   const file = files[0].raw
-  try {
-    ElMessage.info('正在上传文件...')
-    const response = await uploadFile(file)
-    if (response.status === 'ok') {
-      ElMessage.success('文件上传成功')
-      // 触发上传成功事件，传递会话信息
-      emit('upload-success', response)
-      // 清空上传列表
-      upload.value.clearFiles()
-      hasFile.value = false
-    } else {
-      ElMessage.error(`上传失败：${response.message || '未知错误'}`)
+    try {
+      ElMessage.info('正在上传文件...')
+      const response = await uploadService.uploadFile(file)
+      if (response.status === 'ok') {
+        ElMessage.success('文件上传成功')
+        // 触发上传成功事件，传递会话信息
+        emit('upload-success', response)
+        // 清空上传列表
+        upload.value.clearFiles()
+        hasFile.value = false
+      } else {
+        ElMessage.error(`上传失败：${response.message || '未知错误'}`)
+      }
+    } catch (error) {
+      ElMessage.error(`上传失败：${error.message || '网络错误'}`)
+      console.error('上传错误：', error)
     }
-  } catch (error) {
-    ElMessage.error(`上传失败：${error.message || '网络错误'}`)
-    console.error('上传错误：', error)
-  }
 }
 
 const handleSuccess = (response) => {

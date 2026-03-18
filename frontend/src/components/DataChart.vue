@@ -30,10 +30,14 @@ const initChart = () => {
 }
 
 // 监听窗口大小变化，自适应调整图表
+let resizeRaf = 0
 const handleResize = () => {
-  if (chartInstance) {
-    chartInstance.resize()
-  }
+  if (!chartInstance) return
+  if (resizeRaf) cancelAnimationFrame(resizeRaf)
+  resizeRaf = requestAnimationFrame(() => {
+    chartInstance && chartInstance.resize()
+    resizeRaf = 0
+  })
 }
 
 onMounted(() => {
@@ -46,6 +50,10 @@ onUnmounted(() => {
     chartInstance.dispose()
     chartInstance = null
   }
+  if (resizeRaf) {
+    cancelAnimationFrame(resizeRaf)
+    resizeRaf = 0
+  }
   window.removeEventListener('resize', handleResize)
 })
 
@@ -54,7 +62,10 @@ watch(
   () => props.option,
   (newOption) => {
     if (chartInstance && newOption) {
-      chartInstance.setOption(newOption, true)
+      // 用 rAF 合并重绘，降低 ResizeObserver 触发概率
+      requestAnimationFrame(() => {
+        chartInstance && chartInstance.setOption(newOption, true)
+      })
     }
   },
   { deep: true }

@@ -2,9 +2,9 @@ import axios from 'axios';
 
 // 创建axios实例，指向你的FastAPI后端
 const service = axios.create({
-  baseURL: 'http://localhost:8000', // 后端基础地址（纯本地无需改）
+  baseURL: '/api', // 使用代理配置
   timeout: 10000, // 请求超时时间
-  withCredentials: true // 允许携带Cookie（对应后端allow_credentials=True）
+  withCredentials: true // 允许携带Cookie
 });
 
 // 请求拦截器：可选，比如添加token、统一处理请求头

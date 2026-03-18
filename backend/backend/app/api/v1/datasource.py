@@ -9,7 +9,7 @@ from app.models.models import DataSource
 from app.api.v1.schemas.datasource import DataSourceCreate, DataSourceResponse
 from app.core.sql.security import SQLSecurity  # 复用之前的安全校验类
 
-router = APIRouter(prefix="/api/v1/datasource", tags=["数据源管理"])
+router = APIRouter(tags=["数据源管理"])
 
 
 # 1. 新增数据源（核心接口，密码加密存储）

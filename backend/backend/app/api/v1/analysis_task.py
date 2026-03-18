@@ -24,7 +24,7 @@ from app.core.sql.security import SQLSecurity
 from app.utils.llm_client import test_qwen_api
 
 # 创建路由实例
-router = APIRouter(prefix="/api/v1/analysis-task", tags=["分析任务"])
+router = APIRouter(tags=["分析任务"])
 
 
 # ------------------------------

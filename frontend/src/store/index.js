@@ -1,24 +1,10 @@
-import { defineStore } from 'pinia'
+// 统一导出所有 store
+import { useSessionStore } from './sessionStore'
+import { useChatStore } from './chatStore'
+import { useUserStore } from './userStore'
 
-export const useSessionStore = defineStore('session', {
-  state: () => ({
-    sessionId: null,
-    filename: '',
-    previewData: [],
-    columns: []
-  }),
-  actions: {
-    setSession(data) {
-      this.sessionId = data.session_id
-      this.filename = data.filename
-      this.previewData = data.preview
-      this.columns = data.columns
-    },
-    clearSession() {
-      this.sessionId = null
-      this.filename = ''
-      this.previewData = []
-      this.columns = []
-    }
-  }
-})
+export {
+  useSessionStore,
+  useChatStore,
+  useUserStore
+}

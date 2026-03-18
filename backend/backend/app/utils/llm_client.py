@@ -1,30 +1,61 @@
 import requests
+import time
+from typing import Optional, Dict, Any
 from app.core.config import settings
 
-def call_qwen(prompt: str) -> str:
-    if not settings.qwen_api_key:
+def clean_code_output(code: str) -> str:
+    """
+    清理模型返回的代码，移除代码块标记和多余的前缀
+    """
+    code = code.strip()
+    code = code.replace('```python', '').replace('```', '').strip()
+    if code.startswith('python'):
+        code = code[6:].strip()
+    if '```' in code:
+        parts = code.split('```')
+        if len(parts) >= 3:
+            code = parts[1].strip()
+    return code
+
+def call_qwen(prompt: str, retries: int = 3) -> str:
+    """
+    调用 Qwen API，支持重试机制
+    """
+    if not settings.llm.qwen_api_key:
         return "错误：未配置QWEN API密钥"
+    
     headers = {
-        "Authorization": f"Bearer {settings.qwen_api_key}",
+        "Authorization": f"Bearer {settings.llm.qwen_api_key}",
         "Content-Type": "application/json"
     }
+    
     data = {
         "model": "qwen-turbo",
         "input": {"prompt": prompt},
         "parameters": {"result_format": "text", "temperature": 0.7, "max_tokens": 1024}
     }
-    try:
-        response = requests.post(settings.qwen_api_url, json=data, headers=headers, timeout=30)
-        response.raise_for_status()
-        result = response.json()
-        return result.get("output", {}).get("text", f"返回格式异常：{result}")
-    except Exception as e:
-        return f"调用大模型失败：{str(e)}"
+    
+    for attempt in range(retries):
+        try:
+            response = requests.post(settings.llm.qwen_api_url, json=data, headers=headers, timeout=30)
+            response.raise_for_status()
+            result = response.json()
+            return result.get("output", {}).get("text", f"返回格式异常：{result}")
+        except Exception as e:
+            if attempt == retries - 1:
+                return f"调用大模型失败：{str(e)}"
+            time.sleep(2)  # 等待2秒后重试
 
 def test_qwen_api(prompt: str) -> str:
+    """
+    测试 Qwen API 连接
+    """
     return call_qwen(prompt)
 
 def generate_sql(schema_info: str, user_query: str, db_type: str) -> str:
+    """
+    根据表结构和用户查询生成 SQL 语句
+    """
     prompt = f"""
 严格按照以下要求生成SQL语句：
 1. 仅返回可执行的SELECT查询语句，不要任何多余文字（如解释、注释、```sql标记）
@@ -70,15 +101,8 @@ def generate_pandas_code(df_info: dict, user_query: str, history: list = None) -
 3. 代码应简洁高效，只包含必要的操作。
 4. 不要包含任何解释性文字，只返回纯Python代码。
 """
-    code = call_qwen(prompt).strip()
-    code = code.replace('```python', '').replace('```', '').strip()
-    if code.startswith('python'):
-        code = code[6:].strip()
-    if '```' in code:
-        parts = code.split('```')
-        if len(parts) >= 3:
-            code = parts[1].strip()
-    return code
+    code = call_qwen(prompt)
+    return clean_code_output(code)
 
 def generate_clean_code(df_info: dict, clean_instruction: str, history: list = None) -> str:
     """
@@ -114,12 +138,24 @@ def generate_clean_code(df_info: dict, clean_instruction: str, history: list = N
 3. 代码应简洁高效，只包含必要的操作（如 dropna, fillna, drop_duplicates 等）。
 4. 不要包含任何解释性文字，只返回纯Python代码。
 """
-    code = call_qwen(prompt).strip()
-    code = code.replace('```python', '').replace('```', '').strip()
-    if code.startswith('python'):
-        code = code[6:].strip()
-    if '```' in code:
-        parts = code.split('```')
-        if len(parts) >= 3:
-            code = parts[1].strip()
-    return code
+    code = call_qwen(prompt)
+    return clean_code_output(code)
+
+def generate_analysis_summary(analysis_result: Any, user_query: str) -> str:
+    """
+    生成数据分析摘要
+    """
+    prompt = f"""
+你是一个数据分析专家，请根据以下信息生成一个简洁明了的分析摘要：
+
+用户查询：{user_query}
+
+分析结果：{str(analysis_result)}
+
+要求：
+1. 摘要应简洁明了，直接回答用户问题
+2. 不要包含任何引导性短语，直接给出核心结论
+3. 语言自然，符合中文表达习惯
+4. 长度控制在100字以内
+"""
+    return call_qwen(prompt).strip()

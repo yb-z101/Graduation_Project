@@ -1,129 +1,27 @@
 <template>
   <div class="ai-chat-container" :class="themeClass">
     <!-- 左侧侧边栏 -->
-    <aside class="sidebar" :class="{ collapsed: sidebarCollapsed }">
-      <!-- 收起按钮 -->
-      <div class="sidebar-toggle" @click="sidebarCollapsed = !sidebarCollapsed">
-        <el-icon :class="{ 'flipped': sidebarCollapsed }"><Fold /></el-icon>
-      </div>
-
-      <div class="sidebar-top" v-show="!sidebarCollapsed">
-        <el-button class="new-chat-btn" @click="startNewChat">
-          <el-icon><Plus /></el-icon>
-          <span>新建对话</span>
-        </el-button>
-      </div>
-
-      <div class="sidebar-history" v-show="!sidebarCollapsed">
-        <div class="history-group">
-          <div class="group-title">最近会话</div>
-          <div 
-            v-for="session in (sessionStore.sessions || []).slice(0, 5)" 
-            :key="session.id"
-            class="history-item"
-            :class="{ active: session.id === sessionStore.currentSessionId }"
-            @click="loadSession(session)"
-          >
-            <el-icon><ChatLineRound /></el-icon>
-            <span class="text-truncate">{{ session.fileName }}</span>
-          </div>
-        </div>
-        
-        <div class="history-group" v-if="(sessionStore.sessions || []).length > 5">
-          <div class="group-title">历史存档</div>
-          <div 
-            v-for="session in (sessionStore.sessions || []).slice(5)" 
-            :key="session.id"
-            class="history-item"
-            :class="{ active: session.id === sessionStore.currentSessionId }"
-            @click="loadSession(session)"
-          >
-            <el-icon><Folder /></el-icon>
-            <span class="text-truncate">{{ session.fileName }}</span>
-          </div>
-        </div>
-
-        <div v-if="(sessionStore.sessions || []).length === 0" class="empty-history">
-          <span>暂无历史对话</span>
-        </div>
-      </div>
-
-      <div class="sidebar-bottom" v-show="!sidebarCollapsed">
-        <!-- 主题选择器 -->
-        <div class="theme-selector" @click="showThemeDropdown = !showThemeDropdown">
-          <el-icon><Moon v-if="theme === 'dark'" /><Sunny v-else /></el-icon>
-          <span>{{ theme === 'dark' ? '深色' : '浅色' }}</span>
-          <el-icon :class="{ 'rotate': showThemeDropdown }"><ArrowDown /></el-icon>
-          
-          <div v-if="showThemeDropdown" class="theme-dropdown">
-            <div 
-              class="theme-option"
-              :class="{ active: theme === 'dark' }"
-              @click="theme = 'dark'; showThemeDropdown = false"
-            >
-              <el-icon><Moon /></el-icon>
-              <span>深色模式</span>
-              <el-icon v-if="theme === 'dark'"><Check /></el-icon>
-            </div>
-            <div 
-              class="theme-option"
-              :class="{ active: theme === 'light' }"
-              @click="theme = 'light'; showThemeDropdown = false"
-            >
-              <el-icon><Sunny /></el-icon>
-              <span>浅色模式</span>
-              <el-icon v-if="theme === 'light'"><Check /></el-icon>
-            </div>
-          </div>
-        </div>
-
-        <!-- 用户信息 -->
-        <div class="user-profile">
-          <div class="avatar">
-            <el-avatar :size="32" :style="{ backgroundColor: themeAccent }">JS</el-avatar>
-          </div>
-          <div class="info">
-            <div class="name">数据分析师</div>
-            <div class="email">Pro 版本</div>
-          </div>
-        </div>
-      </div>
-    </aside>
+    <Sidebar 
+      :collapsed="sidebarCollapsed"
+      :sessions="sessionStore.sessions || []"
+      :current-session-id="sessionStore.currentSessionId"
+      :theme="theme"
+      @toggle="sidebarCollapsed = !sidebarCollapsed"
+      @new-chat="startNewChat"
+      @load-session="loadSession"
+      @delete-session="handleDeleteSession"
+      @clear-all-sessions="handleClearAllSessions"
+      @change-theme="(newTheme) => { theme = newTheme }"
+    />
 
     <!-- 右侧主区域 -->
     <main class="main-content">
       <!-- 顶部栏 -->
-      <header class="top-bar">
-        <!-- 模型选择器 -->
-        <div class="model-selector" @click="showModelDropdown = !showModelDropdown">
-          <span class="model-icon">
-            <el-icon><Cpu /></el-icon>
-          </span>
-          <span class="model-name">{{ currentModel.name }}</span>
-          <el-icon :class="{ 'rotate': showModelDropdown }"><ArrowDown /></el-icon>
-          
-          <div v-if="showModelDropdown" class="model-dropdown">
-            <div 
-              v-for="model in modelList" 
-              :key="model.id"
-              class="model-option"
-              :class="{ active: currentModel.id === model.id }"
-              @click="selectModel(model)"
-            >
-              <div class="option-info">
-                <div class="option-name">{{ model.name }}</div>
-                <div class="option-desc">{{ model.description }}</div>
-              </div>
-              <el-icon v-if="currentModel.id === model.id"><Check /></el-icon>
-            </div>
-          </div>
-        </div>
-
-        <div class="header-actions">
-          <el-button link :icon="Share" title="分享" />
-          <el-button link :icon="Delete" title="清空" @click="clearChat" />
-        </div>
-      </header>
+      <TopBar 
+        :model-list="modelList"
+        :current-model="currentModel"
+        @select-model="selectModel"
+      />
 
       <!-- 聊天内容区 -->
       <div class="chat-scroll-area" ref="chatWindowRef">
@@ -146,11 +44,7 @@
             class="message-row"
             :class="msg.role"
           >
-            <div class="message-avatar">
-              <el-avatar :icon="msg.role === 'user' ? UserFilled : Service" :size="36" :class="msg.role" />
-            </div>
             <div class="message-body">
-              <div class="message-name">{{ msg.role === 'user' ? '您' : 'AI 助手' }}</div>
               <div class="message-content">
                 <div v-if="msg.role === 'user'" class="user-text">{{ msg.content }}</div>
                 
@@ -165,20 +59,15 @@
                   <div v-if="msg.type === 'chart'" class="content-block">
                     <div class="block-title">{{ msg.title || '数据图表' }}</div>
                     <DataChart :option="msg.chartOption" />
+                    <p v-if="msg.content" class="text-part">{{ msg.content }}</p>
                   </div>
-                  
-                  <p v-if="msg.textPart" class="text-part">{{ msg.textPart }}</p>
                 </div>
               </div>
             </div>
           </div>
 
           <div v-if="chatStore.isLoading" class="message-row ai">
-            <div class="message-avatar">
-              <el-avatar :icon="Service" :size="36" class="ai" />
-            </div>
             <div class="message-body">
-              <div class="message-name">AI 助手</div>
               <div class="message-content loading">
                 <el-skeleton animated :rows="3" />
               </div>
@@ -188,113 +77,80 @@
       </div>
 
       <!-- 底部输入区 -->
-      <div class="input-wrapper">
-        <div class="input-container">
-          <!-- 输入框（功能按钮内置到底部） -->
-          <div class="input-box">
-            <!-- 输入区域 -->
-            <div class="input-area">
-              <el-input
-                v-model="userInput"
-                type="textarea"
-                :rows="1"
-                placeholder="发消息或输入'/'选择技能"
-                @keyup.enter="sendMessage"
-                class="chat-input"
-                :autosize="{ minRows: 1, maxRows: 4 }"
-              />
-              
-              <el-button 
-                class="send-btn"
-                type="primary" 
-                :icon="Position" 
-                :loading="chatStore.isLoading"
-                :disabled="!userInput.trim()"
-                @click="sendMessage"
-                circle
-              />
-            </div>
-
-            <!-- 功能按钮栏（内置到底部） -->
-            <div class="action-buttons">
-              <div class="action-btn" @click="showUploadMenu = !showUploadMenu">
-                <div class="btn-content">
-                  <el-icon><Paperclip /></el-icon>
-                  <span>传附件</span>
-                </div>
-                
-                <!-- 上传类型选择菜单 -->
-                <div v-if="showUploadMenu" class="upload-menu">
-                  <div class="upload-option" @click="handleFileSelect('csv')">
-                    <el-icon><Document /></el-icon>
-                    <span>CSV 文件</span>
-                  </div>
-                  <div class="upload-option" @click="handleFileSelect('sql')">
-                    <el-icon><Connection /></el-icon>
-                    <span>SQL 文件</span>
-                  </div>
-                  <div class="upload-option" @click="handleFileSelect('excel')">
-                    <el-icon><Grid /></el-icon>
-                    <span>Excel 文件</span>
-                  </div>
-                </div>
-              </div>
-
-              <div class="divider"></div>
-
-              <div class="action-btn" @click="quickAsk('数据分析')">
-                <div class="btn-content">
-                  <el-icon><DataAnalysis /></el-icon>
-                  <span>数据分析</span>
-                </div>
-              </div>
-
-              <div class="action-btn" @click="quickAsk('生成图表')">
-                <div class="btn-content">
-                  <el-icon><Picture /></el-icon>
-                  <span>生成图表</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+      <ChatInput 
+        :loading="chatStore.isLoading"
+        @send-message="handleSendMessage"
+        @file-select="handleFileSelect"
+        @quick-ask="quickAsk"
+        ref="chatInputRef"
+      />
     </main>
-
-    <!-- 点击外部关闭下拉 -->
-    <div v-if="showModelDropdown || showThemeDropdown || showUploadMenu" class="dropdown-mask" @click="closeAllDropdowns"></div>
   </div>
 </template>
 
 <script setup>
 import { ref, nextTick, computed, onMounted, watch } from 'vue'
-import { 
-  Plus, ChatLineRound, Folder, Share, Delete, ArrowDown, Check,
-  DataAnalysis, UserFilled, Service, Paperclip, Picture, Position,
-  Cpu, Moon, Sunny, Fold, Document, Connection, Grid
-} from '@element-plus/icons-vue'
+import { DataAnalysis } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
 import DataTable from '../components/DataTable.vue'
 import DataChart from '../components/DataChart.vue'
+import Sidebar from '../components/Sidebar.vue'
+import TopBar from '../components/TopBar.vue'
+import ChatInput from '../components/ChatInput.vue'
 
-import { useSessionStore } from '../store/sessionStore'
+import { useSessionStore } from '../store/index'
 import { useChatStore } from '../store/chatStore'
 
 // 导入 API 模块
-import { sendMessage as sendMessageApi } from '../api/session'
-import { uploadFile } from '../api/upload'
+import { sessionService, uploadService, chatService } from '../api/services'
 
 const sessionStore = useSessionStore()
 const chatStore = useChatStore()
+const chatInputRef = ref(null)
 
-const userInput = ref('')
+// 将后端 DataFrame.to_dict() 结果转换为 records 数组
+// - orient="columns": {col: {index: value}}
+// - orient="records": [{...}, ...]
+const dfDictToRecords = (result) => {
+  if (!result) return { records: [], columns: [] }
+
+  // 已经是 records
+  if (Array.isArray(result)) {
+    const columns = result.length ? Object.keys(result[0]) : []
+    return { records: result, columns }
+  }
+
+  // pandas to_dict() 常见结构：{col: {0: v, 1: v}}
+  if (typeof result === 'object') {
+    const columns = Object.keys(result)
+    if (columns.length === 0) return { records: [], columns: [] }
+
+    const indexSet = new Set()
+    for (const col of columns) {
+      const colObj = result[col]
+      if (colObj && typeof colObj === 'object') {
+        Object.keys(colObj).forEach((k) => indexSet.add(k))
+      }
+    }
+
+    const indices = Array.from(indexSet).sort((a, b) => Number(a) - Number(b))
+    const records = indices.map((idx) => {
+      const row = {}
+      for (const col of columns) {
+        row[col] = result[col]?.[idx]
+      }
+      return row
+    })
+    return { records, columns }
+  }
+
+  return { records: [], columns: [] }
+}
+
 const messages = ref([])
 const chatWindowRef = ref(null)
 const sidebarCollapsed = ref(false)
-const showModelDropdown = ref(false)
-const showThemeDropdown = ref(false)
-const showUploadMenu = ref(false)
 
 // 单个提示框管理
 let messageTimer = null
@@ -325,57 +181,155 @@ const themeGradient = computed(() => theme.value === 'dark'
   : 'linear-gradient(135deg, #4f46e5, #7c3aed)')
 
 const modelList = ref([
-  { id: 'pro', name: 'Data-Analysis-Pro', description: '最强数据分析能力，适合复杂任务' },
-  { id: 'plus', name: 'Data-Analysis-Plus', description: '平衡速度与质量，日常推荐' },
-  { id: 'lite', name: 'Data-Analysis-Lite', description: '快速响应，适合简单查询' }
+  { id: 'ali-qwen', name: '阿里云 Qwen Turbo', description: '阿里云开发的大语言模型，适合数据分析和对话' },
+  { id: 'deepseek', name: 'DeepSeek R1', description: 'DeepSeek开发的大语言模型，擅长代码和数学推理' },
+  { id: 'volcengine', name: '火山引擎 Doubao', description: '火山引擎开发的大语言模型，多语言支持' }
 ])
 
 const currentModel = ref(modelList.value[0])
 
-const closeAllDropdowns = () => {
-  showModelDropdown.value = false
-  showThemeDropdown.value = false
-  showUploadMenu.value = false
-}
-
 const selectModel = (model) => {
   currentModel.value = model
-  showModelDropdown.value = false
   showMessage(`已切换到 ${model.name}`, 'success')
 }
 
 const startNewChat = () => {
   messages.value = []
   sessionStore.currentSessionId = null
-  userInput.value = ''
+  if (chatInputRef.value) {
+    chatInputRef.value.clearInput()
+  }
 }
 
-const clearChat = () => {
-  if(confirm('确定清空当前对话吗？')) {
-    startNewChat()
+const refreshSessionHistory = async () => {
+  try {
+    const response = await sessionService.getSessionHistory()
+    if (response.status === 'ok' && response.sessions) {
+      sessionStore.sessions = []
+      response.sessions.forEach(session => {
+        sessionStore.addSession({
+          id: session.id,
+          fileName: session.fileName,
+          displayName: session.displayName,
+          timestamp: session.timestamp
+        })
+      })
+    }
+  } catch (error) {
+    console.error('获取历史会话失败:', error)
+  }
+}
+
+const handleDeleteSession = async (session) => {
+  if (!confirm('确定删除该会话吗？')) return
+  try {
+    const resp = await sessionService.deleteSession(session.id)
+    if (resp.status === 'ok') {
+      // 如果删的是当前会话，回到空白
+      if (sessionStore.currentSessionId === session.id) {
+        startNewChat()
+      }
+      await refreshSessionHistory()
+      showMessage('会话已删除', 'success')
+    } else {
+      showMessage(resp.message || '删除失败', 'error')
+    }
+  } catch (e) {
+    // 兼容：本地缓存/列表可能存在“已被清空/已被删除”的会话，后端会返回 404
+    if (e?.response?.status === 404) {
+      if (sessionStore.currentSessionId === session.id) {
+        startNewChat()
+      }
+      await refreshSessionHistory()
+      showMessage('该会话已不存在，已刷新列表', 'info')
+      return
+    }
+    showMessage('删除失败', 'error')
+  }
+}
+
+const handleClearAllSessions = async () => {
+  if (!confirm('确定清空全部会话吗？此操作不可恢复。')) return
+  try {
+    const resp = await sessionService.clearAllSessions()
+    if (resp.status === 'ok') {
+      startNewChat()
+      sessionStore.sessions = []
+      sessionStore.saveSessions && sessionStore.saveSessions()
+      // 以防其它端/旧数据影响，再从后端刷新一次
+      await refreshSessionHistory()
+      showMessage('已清空全部会话', 'success')
+    } else {
+      showMessage(resp.message || '清空失败', 'error')
+    }
+  } catch (e) {
+    showMessage('清空失败', 'error')
   }
 }
 
 const loadSession = (session) => {
-  // 注意：实际场景中可能需要从后端加载历史消息
   sessionStore.setCurrentSession(session.id, session.fileName, [], [])
-  messages.value = [{
-    role: 'ai',
-    type: 'text',
-    content: `已加载会话：${session.fileName}`
-  }]
-  scrollToBottom()
+  messages.value = []
+
+  // 从后端恢复该会话的完整消息
+  sessionService.getSessionMessages(session.id).then((resp) => {
+    if (resp.status === 'ok' && Array.isArray(resp.messages)) {
+      const rebuilt = []
+      resp.messages.forEach((m) => {
+        if (m.role === 1) {
+          rebuilt.push({ role: 'user', content: m.content })
+          return
+        }
+        if (m.role === 2) {
+          // 助手：先放文本，再根据 extra 放表格/图表
+          rebuilt.push({ role: 'ai', type: 'text', content: m.content })
+          const extra = m.extra
+          if (extra?.result) {
+            const { records, columns } = dfDictToRecords(extra.result)
+            if (records.length && columns.length) {
+              rebuilt.push({
+                role: 'ai',
+                type: 'table',
+                title: '分析结果表格',
+                data: records,
+                columns
+              })
+            }
+          }
+          if (extra?.chart_option) {
+            rebuilt.push({
+              role: 'ai',
+              type: 'chart',
+              title: '分析结果图表',
+              chartOption: extra.chart_option
+            })
+          }
+          return
+        }
+        // 系统消息
+        rebuilt.push({ role: 'ai', type: 'text', content: m.content })
+      })
+      messages.value = rebuilt
+      scrollToBottom()
+    } else {
+      messages.value = [{ role: 'ai', type: 'text', content: '会话加载失败：未获取到消息' }]
+      scrollToBottom()
+    }
+  }).catch(() => {
+    messages.value = [{ role: 'ai', type: 'text', content: '会话加载失败：网络错误' }]
+    scrollToBottom()
+  })
 }
 
 const quickAsk = (text) => {
-  userInput.value = text
-  sendMessage()
+  if (chatInputRef.value) {
+    chatInputRef.value.userInput = text
+    handleSendMessage(text)
+  }
 }
 
 // 修改后的文件选择与上传逻辑
 const handleFileSelect = (type) => {
-  showUploadMenu.value = false
-  
   const fileTypes = {
     csv: '.csv',
     sql: '.sql',
@@ -391,14 +345,10 @@ const handleFileSelect = (type) => {
       try {
         showMessage('正在上传文件...', 'info')
         // 调用真实上传 API
-        const response = await uploadFile(file)
+        const response = await uploadService.uploadFile(file)
         
         if (response.status === 'ok') {
-          handleFileUploaded({
-            fileName: file.name,
-            previewData: response.data || [],
-            columns: response.columns || []
-          })
+          handleFileUploaded(response)
         } else {
           showMessage(`上传失败：${response.message}`, 'error')
         }
@@ -413,57 +363,104 @@ const handleFileSelect = (type) => {
 
 // 处理上传成功后的逻辑
 const handleFileUploaded = async (responseData) => {
-  // 注意：这里仍然使用生成的 mockSessionId，实际项目中 sessionId 通常由上传接口返回
-  const mockSessionId = 'sess_' + Date.now()
-  const fileName = responseData.fileName || 'uploaded_data.csv'
+  // 注意：这里应该使用上传接口返回的 sessionId
+  const sessionId = responseData.session_id;
+  const fileName = responseData.filename;
   
-  sessionStore.setCurrentSession(mockSessionId, fileName, responseData.previewData || [], responseData.columns || [])
-  sessionStore.addSession({ id: mockSessionId, fileName, timestamp: new Date() })
+  sessionStore.setCurrentSession(sessionId, fileName, responseData.data || [], responseData.columns || []);
+  sessionStore.addSession({ id: sessionId, fileName, timestamp: new Date() });
 
   messages.value.push({
     role: 'ai',
     type: 'text',
-    content: `文件《${fileName}》已上传。共 ${responseData.previewData?.length || 0} 条数据。`
-  })
-  scrollToBottom()
-  showMessage('文件上传成功', 'success')
-}
+    content: `文件《${fileName}》已上传。共 ${responseData.row_count} 条数据。`
+  });
+  scrollToBottom();
+  showMessage('文件上传成功', 'success');
+};
 
 // 修改后的发送消息逻辑
-const sendMessage = async () => {
-  const text = userInput.value.trim()
-  if (!text) return
-
-  if (!sessionStore.currentSessionId && messages.value.length === 0) {
-    showMessage('请先上传数据文件', 'warning')
-    return
-  }
+const handleSendMessage = async (text) => {
+  const trimmedText = text.trim()
+  if (!trimmedText) return
 
   // 添加用户消息到列表
-  messages.value.push({ role: 'user', content: text })
-  userInput.value = ''
+  messages.value.push({ role: 'user', content: trimmedText })
+  if (chatInputRef.value) {
+    chatInputRef.value.clearInput()
+  }
   chatStore.setLoading(true)
   scrollToBottom()
 
   try {
-    // 调用真实发送消息 API
-    const response = await sendMessageApi(sessionStore.currentSessionId, text)
-    
-    if (response.status === 'ok') {
+    if (!sessionStore.currentSessionId && messages.value.length === 1) {
+      // 第一次发送消息且没有上传文件，提示用户上传文件
       const aiMessage = {
         role: 'ai',
-        type: response.chart_option ? 'chart' : 'text',
-        content: response.error || '分析完成',
-        chartOption: response.chart_option,
-        textPart: response.error || `分析完成，共 ${response.result?.length || 0} 条结果`
+        type: 'text',
+        content: '本系统旨在进行智能数据分析，请您先上传文件。'
       }
       messages.value.push(aiMessage)
+    } else if (sessionStore.currentSessionId) {
+      // 有会话ID，调用分析API
+      const response = await sessionService.sendMessage(sessionStore.currentSessionId, trimmedText)
+      
+      if (response.status === 'ok') {
+        // 1) 先展示文本总结（优先 summary，其次 error）
+        messages.value.push({
+          role: 'ai',
+          type: 'text',
+          content: response.analysis_summary || response.error || '分析完成'
+        })
+
+        // 2) 有结果就展示表格
+        if (response.result) {
+          const { records, columns } = dfDictToRecords(response.result)
+          if (records.length && columns.length) {
+            messages.value.push({
+              role: 'ai',
+              type: 'table',
+              title: '分析结果表格',
+              data: records,
+              columns
+            })
+          }
+        }
+
+        // 3) 有图表配置就展示图表
+        if (response.chart_option) {
+          messages.value.push({
+            role: 'ai',
+            type: 'chart',
+            title: '分析结果图表',
+            chartOption: response.chart_option
+          })
+        }
     } else {
       messages.value.push({
         role: 'ai',
         type: 'text',
         content: `错误：${response.message || '处理失败'}`
       })
+    }
+    } else {
+      // 没有会话ID但不是第一次发送消息，调用普通聊天API
+      const response = await chatService.sendChatMessage(trimmedText)
+      
+      if (response.status === 'ok') {
+        const aiMessage = {
+          role: 'ai',
+          type: 'text',
+          content: response.response
+        }
+        messages.value.push(aiMessage)
+      } else {
+        messages.value.push({
+          role: 'ai',
+          type: 'text',
+          content: `错误：${response.message || '处理失败'}`
+        })
+      }
     }
   } catch (error) {
     showMessage('消息发送失败', 'error')
@@ -486,11 +483,17 @@ const scrollToBottom = () => {
   })
 }
 
-onMounted(() => {
+onMounted(async () => {
   const savedTheme = localStorage.getItem('chat-theme')
   if (savedTheme) {
     theme.value = savedTheme
   }
+  
+  // 初始化会话存储，加载历史会话
+  sessionStore.init()
+  
+  // 从后端获取历史会话
+  await refreshSessionHistory()
 })
 
 watch(theme, (newVal) => {
@@ -538,216 +541,6 @@ watch(theme, (newVal) => {
   transition: all 0.3s ease;
 }
 
-/* 侧边栏 */
-.sidebar {
-  width: 260px;
-  background-color: var(--bg-secondary);
-  display: flex;
-  flex-direction: column;
-  border-right: 1px solid var(--border-color);
-  flex-shrink: 0;
-  transition: width 0.3s ease;
-  position: relative;
-}
-
-.sidebar.collapsed {
-  width: 60px;
-}
-
-.sidebar-toggle {
-  position: absolute;
-  top: 16px;
-  right: -12px;
-  width: 24px;
-  height: 24px;
-  background-color: var(--bg-hover);
-  border: 1px solid var(--border-color);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  z-index: 10;
-  transition: all 0.2s;
-  color: var(--text-secondary);
-}
-
-.sidebar-toggle:hover {
-  background-color: var(--accent-color);
-  color: white;
-  border-color: var(--accent-color);
-}
-
-.sidebar-toggle .el-icon {
-  transition: transform 0.3s;
-}
-
-.sidebar-toggle .flipped {
-  transform: rotate(180deg);
-}
-
-.sidebar-top {
-  padding: 16px;
-}
-
-.new-chat-btn {
-  width: 100%;
-  background-color: var(--accent-color);
-  color: white;
-  border: none;
-  height: 40px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  font-weight: 500;
-  transition: all 0.2s;
-}
-
-.new-chat-btn:hover {
-  background-color: var(--accent-hover);
-}
-
-.sidebar-history {
-  flex: 1;
-  overflow-y: auto;
-  padding: 0 12px;
-}
-
-.history-group {
-  margin-bottom: 24px;
-}
-
-.group-title {
-  font-size: 12px;
-  color: var(--text-secondary);
-  padding: 8px 12px;
-  font-weight: 600;
-}
-
-.history-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 6px;
-  cursor: pointer;
-  color: var(--text-secondary);
-  font-size: 14px;
-  transition: background 0.2s;
-}
-
-.history-item:hover {
-  background-color: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.history-item.active {
-  background-color: var(--bg-hover);
-  color: var(--accent-color);
-}
-
-.text-truncate {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.empty-history {
-  text-align: center;
-  padding: 20px;
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-.sidebar-bottom {
-  padding: 12px;
-  border-top: 1px solid var(--border-color);
-}
-
-.theme-selector {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  cursor: pointer;
-  color: var(--text-secondary);
-  font-size: 14px;
-  margin-bottom: 8px;
-  transition: all 0.2s;
-  position: relative;
-}
-
-.theme-selector:hover {
-  background-color: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.theme-dropdown {
-  position: absolute;
-  bottom: 100%;
-  left: 0;
-  margin-bottom: 8px;
-  background-color: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 10px;
-  padding: 6px;
-  min-width: 140px;
-  box-shadow: 0 10px 40px var(--shadow-color);
-  z-index: 100;
-}
-
-.theme-option {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background 0.2s;
-  font-size: 13px;
-}
-
-.theme-option:hover {
-  background-color: var(--bg-hover);
-}
-
-.theme-option.active {
-  background-color: var(--bg-hover);
-  color: var(--accent-color);
-}
-
-.theme-option .el-icon:last-child {
-  margin-left: auto;
-}
-
-.user-profile {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  cursor: pointer;
-  padding: 8px;
-  border-radius: 8px;
-  transition: background 0.2s;
-}
-
-.user-profile:hover {
-  background-color: var(--bg-hover);
-}
-
-.info .name {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.info .email {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
 /* 主内容区 */
 .main-content {
   flex: 1;
@@ -756,101 +549,6 @@ watch(theme, (newVal) => {
   position: relative;
   background-color: var(--bg-primary);
   transition: all 0.3s ease;
-}
-
-.top-bar {
-  height: 60px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0 24px;
-  border-bottom: 1px solid var(--border-color);
-}
-
-.model-selector {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background-color: var(--bg-secondary);
-  padding: 8px 14px;
-  border-radius: 20px;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text-primary);
-  border: 1px solid var(--border-color);
-  position: relative;
-  transition: all 0.2s;
-}
-
-.model-selector:hover {
-  background-color: var(--bg-hover);
-  border-color: var(--accent-color);
-}
-
-.model-icon {
-  color: var(--accent-color);
-}
-
-.model-selector .rotate {
-  transform: rotate(180deg);
-  transition: transform 0.2s;
-}
-
-.model-dropdown {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  margin-top: 8px;
-  background-color: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  padding: 8px;
-  min-width: 280px;
-  box-shadow: 0 10px 40px var(--shadow-color);
-  z-index: 100;
-}
-
-.model-option {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.model-option:hover {
-  background-color: var(--bg-hover);
-}
-
-.model-option.active {
-  background-color: var(--bg-hover);
-  color: var(--accent-color);
-}
-
-.option-info {
-  flex: 1;
-}
-
-.option-name {
-  font-weight: 600;
-  font-size: 14px;
-  margin-bottom: 2px;
-}
-
-.option-desc {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.header-actions .el-button {
-  color: var(--text-secondary);
-}
-
-.header-actions .el-button:hover {
-  color: var(--text-primary);
 }
 
 /* 聊天滚动区 */
@@ -915,30 +613,51 @@ watch(theme, (newVal) => {
   animation: fadeIn 0.3s ease;
 }
 
+/* 去掉头像后收紧间距 */
+.message-row {
+  gap: 0;
+}
+
+/* 用户消息靠右（头像/内容反向） */
+.message-row.user {
+  flex-direction: row-reverse;
+}
+
+.message-row.user .message-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  text-align: right;
+}
+
+.message-row.user .message-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+/* AI 消息靠左（默认） */
+.message-row.ai .message-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+}
+
+.message-row.ai .message-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
-.message-avatar .el-avatar {
-  background-color: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.message-avatar .el-avatar.ai {
-  background: var(--theme-gradient, linear-gradient(135deg, #6366f1, #a855f7));
-}
-
 .message-body {
   flex: 1;
   min-width: 0;
-}
-
-.message-name {
-  font-size: 14px;
-  font-weight: 600;
-  margin-bottom: 8px;
-  color: var(--text-primary);
 }
 
 .message-content {
@@ -947,12 +666,30 @@ watch(theme, (newVal) => {
   color: var(--text-secondary);
 }
 
+.message-content p {
+  margin: 0;
+}
+
 .user-text {
   background-color: var(--message-user-bg);
   padding: 12px 16px;
   border-radius: 18px;
   display: inline-block;
   color: #ffffff;
+  max-width: 620px;
+  word-break: break-word;
+}
+
+/* AI 文本消息也使用气泡（避免看起来像纯段落） */
+.ai-content > p {
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  padding: 12px 16px;
+  border-radius: 18px;
+  color: var(--text-primary);
+  display: inline-block;
+  max-width: 620px;
+  word-break: break-word;
 }
 
 .content-block {
@@ -961,6 +698,8 @@ watch(theme, (newVal) => {
   border-radius: 12px;
   padding: 16px;
   border: 1px solid var(--border-color);
+  max-width: 720px;
+  width: 100%;
 }
 
 .block-title {
@@ -968,164 +707,6 @@ watch(theme, (newVal) => {
   margin-bottom: 12px;
   color: var(--text-primary);
   font-size: 14px;
-}
-
-/* 输入区 */
-.input-wrapper {
-  padding: 20px 24px 24px;
-  background-color: var(--bg-primary);
-}
-
-.input-container {
-  max-width: 900px;
-  margin: 0 auto;
-}
-
-.input-box {
-  background-color: var(--bg-input);
-  border: 1px solid var(--border-color);
-  border-radius: 24px;
-  padding: 16px 20px;
-  transition: all 0.2s;
-  box-shadow: 0 2px 10px var(--shadow-color);
-}
-
-.input-box:focus-within {
-  border-color: var(--accent-color);
-  box-shadow: 0 4px 20px var(--shadow-color);
-}
-
-.input-area {
-  display: flex;
-  align-items: flex-end;
-  gap: 12px;
-}
-
-.chat-input {
-  flex: 1;
-}
-
-/* 关键：去掉输入框内嵌白框 */
-.chat-input :deep(.el-textarea__inner) {
-  background-color: transparent;
-  border: none;
-  box-shadow: none;
-  color: var(--text-primary);
-  padding: 0;
-  resize: none;
-  font-size: 15px;
-  line-height: 1.5;
-}
-
-.chat-input :deep(.el-textarea__inner):focus {
-  border: none;
-  box-shadow: none;
-  outline: none;
-}
-
-.chat-input :deep(.el-textarea__inner)::placeholder {
-  color: var(--text-muted);
-}
-
-.send-btn {
-  background-color: var(--accent-color);
-  border: none;
-  width: 40px;
-  height: 40px;
-  flex-shrink: 0;
-}
-
-.send-btn:hover {
-  background-color: var(--accent-hover);
-}
-
-/* 功能按钮栏（内置到底部） */
-.action-buttons {
-  display: flex;
-  gap: 8px;
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border-color);
-  flex-wrap: wrap;
-  align-items: center;
-}
-
-.action-btn {
-  background-color: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 16px;
-  padding: 6px 12px;
-  cursor: pointer;
-  transition: all 0.2s;
-  position: relative;
-  min-width: fit-content;
-}
-
-.action-btn:hover {
-  background-color: var(--bg-hover);
-  border-color: var(--accent-color);
-}
-
-.btn-content {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.action-btn:hover .btn-content {
-  color: var(--accent-color);
-}
-
-.divider {
-  width: 1px;
-  height: 20px;
-  background-color: var(--border-color);
-  margin: 0 4px;
-}
-
-/* 上传菜单 */
-.upload-menu {
-  position: absolute;
-  bottom: 100%;
-  left: 0;
-  margin-bottom: 8px;
-  background-color: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  padding: 6px;
-  min-width: 160px;
-  box-shadow: 0 10px 40px var(--shadow-color);
-  z-index: 100;
-}
-
-.upload-option {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background 0.2s;
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-
-.upload-option:hover {
-  background-color: var(--bg-hover);
-  color: var(--accent-color);
-}
-
-/* 下拉遮罩 */
-.dropdown-mask {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 99;
 }
 
 /* 滚动条美化 */
