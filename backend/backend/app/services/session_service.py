@@ -181,7 +181,7 @@ result = df
     }
 
 
-async def send_message(session_id: str, message: str, db: Session) -> Dict[str, Any]:
+async def send_message(session_id: str, message: str, model_id: str, db: Session) -> Dict[str, Any]:
     """发送消息并处理"""
     # 获取会话数据
     session_data = get_session(session_id)
@@ -196,7 +196,9 @@ async def send_message(session_id: str, message: str, db: Session) -> Dict[str, 
         "columns": session_data["columns"],
         "user_query": message,
         "history": session_data.get("history", []),
-        "sql_content": session_data.get("sql_content")
+        "sql_content": session_data.get("sql_content"),
+        "sql_result": session_data.get("sql_result"),
+        "model_id": model_id
     }
 
     # 执行工作流
@@ -316,14 +318,23 @@ def get_session_history(db: Session) -> Dict[str, Any]:
         # 生成 displayName（你提的规则）
         display_name = None
         filename = session.filename or ""
-        base = filename.rsplit(".", 1)[0] if "." in filename else filename
         if filename and (has_upload_msg or has_analysis_msg):
-            display_name = f"{base}文件数据分析"
+            # 按照用户要求的格式生成displayName
+            if filename.lower().endswith('.csv'):
+                display_name = f"{filename}文件分析"
+            elif filename.lower().endswith('.sql'):
+                display_name = f"{filename}文件分析"
+            elif filename.lower().endswith('.xlsx') or filename.lower().endswith('.xls'):
+                display_name = f"{filename}文件分析"
+            elif "数据库" in filename:
+                display_name = f"{filename}数据库数据分析"
+            else:
+                display_name = f"{filename}文件分析"
         else:
             title = (last_user_msg.content or "").strip() if last_user_msg else ""
             if len(title) > 10:
                 title = title[:10] + "…"
-            display_name = title or (f"{base}会话" if base else "新会话")
+            display_name = title or (f"{filename}会话" if filename else "新会话")
 
         session_list.append({
             "id": session.id,

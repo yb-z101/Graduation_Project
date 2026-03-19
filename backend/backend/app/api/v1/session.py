@@ -59,10 +59,11 @@ def clean_session_data_endpoint(
 async def send_message_endpoint(
         session_id: str = Form(...),
         message: str = Form(...),
+        model_id: str = Form("ali-qwen"),
         db: Session = Depends(get_db)
 ):
     """发送消息并处理"""
-    return await send_message(session_id, message, db)
+    return await send_message(session_id, message, model_id, db)
 
 @router.get("/history")
 def get_session_history_endpoint(

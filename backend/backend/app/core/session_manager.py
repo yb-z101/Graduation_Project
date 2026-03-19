@@ -6,7 +6,7 @@ from datetime import datetime
 # 内存存储会话数据（键为session_id，值为会话信息）
 sessions: Dict[str, Dict[str, Any]] = {}
 
-def create_session(dataframe: pd.DataFrame, filename: str, sql_content: Optional[str] = None) -> str:
+def create_session(dataframe: pd.DataFrame, filename: str, sql_content: Optional[str] = None, sql_result: Optional[Dict[str, Any]] = None) -> str:
     """创建新会话，返回session_id"""
     session_id = str(uuid.uuid4())
     sessions[session_id] = {
@@ -20,7 +20,8 @@ def create_session(dataframe: pd.DataFrame, filename: str, sql_content: Optional
         "row_count": len(dataframe),
         "created_at": datetime.now().isoformat(),
         "history": [],  # 新增：存储对话历史
-        "sql_content": sql_content  # 新增：存储SQL内容
+        "sql_content": sql_content,  # 新增：存储SQL内容
+        "sql_result": sql_result  # 新增：存储SQL执行结果
     }
     return session_id
 

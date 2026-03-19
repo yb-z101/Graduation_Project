@@ -1,10 +1,13 @@
-from typing import Optional
+from typing import Optional, Dict, Any
 import pandas as pd
 import os
 import io
 import json
+import re
+from datetime import datetime, timedelta
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
+import sqlalchemy as sa
 
 from app.core.session_manager import create_session, get_session, update_session_dataframe
 from app.models.models import Session as SessionModel, SessionMessage
@@ -43,6 +46,121 @@ def parse_sql_from_bytes(content: bytes, filename: str) -> str:
         raise ValueError("不支持的文件格式，请上传 SQL 文件")
 
 
+def execute_sql_file(content: str, filename: str) -> Dict[str, Any]:
+    """执行 SQL 文件，在 TempSQL_db 中创建临时表并返回表结构和数据"""
+    # 创建临时数据库连接
+    # 使用用户提供的正确凭据
+    db_url = "mysql+pymysql://root:123456@localhost:3306/tempsql_db?charset=utf8mb4"
+    engine = sa.create_engine(
+        db_url,
+        pool_pre_ping=True,
+        connect_args={
+            'connect_timeout': 10,
+            'read_timeout': 10,
+            'write_timeout': 10
+        }
+    )
+    
+    # 生成唯一的前缀，避免表名冲突
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    file_prefix = re.sub(r'[^a-zA-Z0-9]', '_', os.path.splitext(filename)[0])
+    table_prefix = f"temp_{file_prefix}_{timestamp}_"
+    
+    # 解析 SQL 语句
+    statements = re.split(r';\s*$', content, flags=re.MULTILINE)
+    statements = [stmt.strip() for stmt in statements if stmt.strip()]
+    
+    # 存储创建的表名
+    created_tables = []
+    table_structures = {}
+    
+    try:
+        with engine.connect() as conn:
+            # 开始事务
+            trans = conn.begin()
+            
+            for stmt in statements:
+                # 检查是否是 CREATE TABLE 语句
+                create_match = re.match(r'CREATE\s+TABLE\s+`?([a-zA-Z0-9_]+)`?', stmt, re.IGNORECASE)
+                if create_match:
+                    # 获取原始表名
+                    original_table_name = create_match.group(1)
+                    # 生成新的表名
+                    new_table_name = f"{table_prefix}{original_table_name}"
+                    # 替换表名
+                    modified_stmt = re.sub(r'CREATE\s+TABLE\s+`?([a-zA-Z0-9_]+)`?', f'CREATE TABLE `{new_table_name}`', stmt, flags=re.IGNORECASE)
+                    # 执行修改后的语句
+                    conn.execute(sa.text(modified_stmt))
+                    created_tables.append(new_table_name)
+                    # 记录表结构
+                    inspector = sa.inspect(engine)
+                    columns = inspector.get_columns(new_table_name)
+                    table_structures[new_table_name] = {
+                        'original_name': original_table_name,
+                        'columns': [{
+                            'name': col['name'],
+                            'type': str(col['type']),
+                            'nullable': col['nullable']
+                        } for col in columns]
+                    }
+                else:
+                    # 对于其他语句（如 INSERT），需要替换表名
+                    modified_stmt = stmt
+                    for table in created_tables:
+                        original_name = table_structures[table]['original_name']
+                        # 替换 INSERT INTO 语句中的表名
+                        modified_stmt = re.sub(
+                            r'INSERT\s+INTO\s+`?' + re.escape(original_name) + r'`?',
+                            f'INSERT INTO `{table}`',
+                            modified_stmt,
+                            flags=re.IGNORECASE
+                        )
+                    # 执行修改后的语句
+                    conn.execute(sa.text(modified_stmt))
+            
+            # 提交事务
+            trans.commit()
+            
+            # 获取每个表的数据
+            table_data = {}
+            for table in created_tables:
+                # 读取表数据
+                df = pd.read_sql_table(table, engine)
+                table_data[table] = {
+                    'original_name': table_structures[table]['original_name'],
+                    'columns': table_structures[table]['columns'],
+                    'data': df.to_dict('records'),
+                    'row_count': len(df)
+                }
+                
+        # 返回结果
+        return {
+            'status': 'ok',
+            'tables': table_data,
+            'table_prefix': table_prefix,
+            'expires_at': (datetime.now() + timedelta(hours=24)).isoformat()
+        }
+        
+    except Exception as e:
+        # 回滚事务
+        if 'trans' in locals():
+            trans.rollback()
+        # 清理已创建的表
+        try:
+            with engine.connect() as conn:
+                for table in created_tables:
+                    try:
+                        conn.execute(sa.text(f'DROP TABLE IF EXISTS `{table}`'))
+                    except:
+                        pass
+        except:
+            pass
+        raise HTTPException(status_code=400, detail=f"SQL 执行失败：{str(e)}")
+    finally:
+        # 关闭引擎
+        engine.dispose()
+
+
 def handle_file_upload(file_content: bytes, filename: str, session_id: Optional[str], db: Session):
     """处理文件上传逻辑"""
     ext = os.path.splitext(filename)[1].lower()
@@ -59,18 +177,43 @@ def handle_file_upload(file_content: bytes, filename: str, session_id: Optional[
             error_detail = str(e) if str(e) else "未知错误"
             raise HTTPException(status_code=400, detail=f"SQL 文件解析失败：{error_detail}")
         
+        # 执行 SQL 文件，在 TempSQL_db 中创建临时表
+        try:
+            sql_result = execute_sql_file(sql_content, filename)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            error_detail = str(e) if str(e) else "未知错误"
+            raise HTTPException(status_code=400, detail=f"SQL 执行失败：{error_detail}")
+        
         # 为 SQL 文件创建会话
-        # 由于 SQL 文件不是表格数据，我们创建一个空的 DataFrame 作为占位符
-        df = pd.DataFrame()
-        session_id = create_session(df, filename, sql_content)
+        # 使用第一个表的数据作为主数据
+        tables = sql_result['tables']
+        if tables:
+            # 获取第一个表的数据
+            first_table_name = next(iter(tables))
+            first_table = tables[first_table_name]
+            # 创建 DataFrame
+            df = pd.DataFrame(first_table['data'])
+            # 提取列信息
+            columns = [{'name': col['name'], 'type': col['type']} for col in first_table['columns']]
+            row_count = first_table['row_count']
+        else:
+            # 如果没有表，创建空 DataFrame
+            df = pd.DataFrame()
+            columns = []
+            row_count = 0
+        
+        # 创建会话，存储 SQL 执行结果
+        session_id = create_session(df, filename, sql_content, sql_result)
         
         # 在数据库中创建会话记录
         new_session = SessionModel(
             id=session_id,
             filename=filename,
-            row_count=0,  # SQL 文件没有行数
-            columns=json.dumps([]),  # SQL 文件没有列
-            preview_data=json.dumps({})
+            row_count=row_count,
+            columns=json.dumps(columns),
+            preview_data=json.dumps(df.head(5).to_dict('records'))
         )
         session_repository.create_session(new_session)
         
@@ -78,11 +221,12 @@ def handle_file_upload(file_content: bytes, filename: str, session_id: Optional[
         session_repository.create_session_message(SessionMessage(
             session_id=session_id,
             role=3,
-            content=f"已上传文件：{filename}",
+            content=f"已上传文件：{filename}（{row_count} 行）",
             extra=json.dumps({
                 "type": "upload",
                 "filename": filename,
-                "sql_content": sql_content[:1000]  # 只存储前 1000 个字符，避免存储过多内容
+                "sql_content": sql_content[:1000],  # 只存储前 1000 个字符，避免存储过多内容
+                "sql_result": sql_result
             }, ensure_ascii=False)
         ))
         
@@ -92,9 +236,9 @@ def handle_file_upload(file_content: bytes, filename: str, session_id: Optional[
             "message": "SQL 文件上传成功",
             "session_id": session_id,
             "filename": filename,
-            "data": {},
-            "columns": [],
-            "row_count": 0
+            "data": df.head(5).to_dict('records'),
+            "columns": columns,
+            "row_count": row_count
         }
     else:
         # 处理 CSV 或 Excel 文件

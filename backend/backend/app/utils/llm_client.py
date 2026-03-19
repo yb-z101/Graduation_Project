@@ -46,13 +46,129 @@ def call_qwen(prompt: str, retries: int = 3) -> str:
                 return f"调用大模型失败：{str(e)}"
             time.sleep(2)  # 等待2秒后重试
 
+
+def call_deepseek(prompt: str, retries: int = 3) -> str:
+    """
+    调用 DeepSeek API，支持重试机制
+    """
+    if not settings.llm.deepseek_api_key:
+        return "错误：未配置DeepSeek API密钥"
+    
+    headers = {
+        "Authorization": f"Bearer {settings.llm.deepseek_api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    data = {
+        "model": "deepseek-chat",
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.7,
+        "max_tokens": 1024
+    }
+    
+    for attempt in range(retries):
+        try:
+            response = requests.post(settings.llm.deepseek_api_url, json=data, headers=headers, timeout=30)
+            response.raise_for_status()
+            result = response.json()
+            return result.get("choices", [{}])[0].get("message", {}).get("content", f"返回格式异常：{result}")
+        except Exception as e:
+            if attempt == retries - 1:
+                return f"调用大模型失败：{str(e)}"
+            time.sleep(2)  # 等待2秒后重试
+
+
+def call_volcengine(prompt: str, retries: int = 3) -> str:
+    """
+    调用火山引擎 Doubao API，支持重试机制
+    """
+    api_key = "1f75115a-150e-4f9a-8631-48fb469449ef"  # 使用用户提供的API Key
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    data = {
+        "model": "doubao-seed-2-0-lite-260215",  # 使用用户提供的模型名称
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.7,
+        "max_tokens": 1024
+    }
+    
+    for attempt in range(retries):
+        try:
+            # 使用正确的API路径
+            response = requests.post("https://ark.cn-beijing.volces.com/api/v3/chat/completions", json=data, headers=headers, timeout=60)
+            response.raise_for_status()
+            result = response.json()
+            return result.get("choices", [{}])[0].get("message", {}).get("content", f"返回格式异常：{result}")
+        except Exception as e:
+            if attempt == retries - 1:
+                return f"调用大模型失败：{str(e)}"
+            time.sleep(2)  # 等待2秒后重试
+
+
+def call_spark(prompt: str, retries: int = 3) -> str:
+    """
+    调用星火大模型 API，支持重试机制
+    """
+    # 使用HTTP协议的APIPassword
+    api_password = "nTOQvDczWHLvfehWFjbA:BxmSBIaCQVDrcuKQmXkw"
+    
+    headers = {
+        "Authorization": f"Bearer {api_password}",
+        "Content-Type": "application/json"
+    }
+    
+    data = {
+        "model": "spark-x",
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.7,
+        "max_tokens": 1024
+    }
+    
+    for attempt in range(retries):
+        try:
+            response = requests.post("https://spark-api-open.xf-yun.com/v2/chat/completions", json=data, headers=headers, timeout=30)
+            response.raise_for_status()
+            result = response.json()
+            return result.get("choices", [{}])[0].get("message", {}).get("content", f"返回格式异常：{result}")
+        except Exception as e:
+            if attempt == retries - 1:
+                return f"调用大模型失败：{str(e)}"
+            time.sleep(2)  # 等待2秒后重试
+
+
+def call_llm(model_id: str, prompt: str, retries: int = 3) -> str:
+    """
+    统一调用大模型的接口
+    model_id: 模型ID，可选值：ali-qwen, deepseek, volcengine, spark
+    """
+    if model_id == "ali-qwen":
+        return call_qwen(prompt, retries)
+    elif model_id == "deepseek":
+        return call_deepseek(prompt, retries)
+    elif model_id == "volcengine":
+        return call_volcengine(prompt, retries)
+    elif model_id == "spark":
+        return call_spark(prompt, retries)
+    else:
+        return f"错误：不支持的模型ID：{model_id}"
+
 def test_qwen_api(prompt: str) -> str:
     """
     测试 Qwen API 连接
     """
     return call_qwen(prompt)
 
-def generate_sql(schema_info: str, user_query: str, db_type: str) -> str:
+def generate_sql(schema_info: str, user_query: str, db_type: str, model_id: str = "ali-qwen") -> str:
     """
     根据表结构和用户查询生成 SQL 语句
     """
@@ -65,9 +181,9 @@ def generate_sql(schema_info: str, user_query: str, db_type: str) -> str:
 4. 回答用户问题：{user_query}
 5. 禁止包含DROP/DELETE/ALTER等危险操作
 """
-    return call_qwen(prompt).strip().replace("```sql", "").replace("```", "")
+    return call_llm(model_id, prompt).strip().replace("```sql", "").replace("```", "")
 
-def generate_pandas_code(df_info: dict, user_query: str, history: list = None) -> str:
+def generate_pandas_code(df_info: dict, user_query: str, history: list = None, model_id: str = "ali-qwen") -> str:
     """
     生成 pandas 代码，可结合历史对话。
     history: 格式为 [{"role": "user/assistant", "content": "消息", ...}]
@@ -101,10 +217,10 @@ def generate_pandas_code(df_info: dict, user_query: str, history: list = None) -
 3. 代码应简洁高效，只包含必要的操作。
 4. 不要包含任何解释性文字，只返回纯Python代码。
 """
-    code = call_qwen(prompt)
+    code = call_llm(model_id, prompt)
     return clean_code_output(code)
 
-def generate_clean_code(df_info: dict, clean_instruction: str, history: list = None) -> str:
+def generate_clean_code(df_info: dict, clean_instruction: str, history: list = None, model_id: str = "ali-qwen") -> str:
     """
     根据用户清洗指令生成 pandas 清洗代码。
     要求：代码最终将清洗后的 DataFrame 赋值给变量 `df`（覆盖原变量）。
@@ -138,10 +254,10 @@ def generate_clean_code(df_info: dict, clean_instruction: str, history: list = N
 3. 代码应简洁高效，只包含必要的操作（如 dropna, fillna, drop_duplicates 等）。
 4. 不要包含任何解释性文字，只返回纯Python代码。
 """
-    code = call_qwen(prompt)
+    code = call_llm(model_id, prompt)
     return clean_code_output(code)
 
-def generate_analysis_summary(analysis_result: Any, user_query: str) -> str:
+def generate_analysis_summary(analysis_result: Any, user_query: str, model_id: str = "ali-qwen") -> str:
     """
     生成数据分析摘要
     """
@@ -158,4 +274,4 @@ def generate_analysis_summary(analysis_result: Any, user_query: str) -> str:
 3. 语言自然，符合中文表达习惯
 4. 长度控制在100字以内
 """
-    return call_qwen(prompt).strip()
+    return call_llm(model_id, prompt).strip()

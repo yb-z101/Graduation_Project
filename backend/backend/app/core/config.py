@@ -32,6 +32,12 @@ class LLMSettings(BaseSettings):
     # 火山引擎模型配置
     volcengine_api_key: str = os.getenv("VOLCENGINE_API_KEY", "")
     volcengine_api_url: str = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+    
+    # 星火大模型配置
+    spark_app_id: str = os.getenv("SPARK_APP_ID", "")
+    spark_api_key: str = os.getenv("SPARK_API_KEY", "")
+    spark_api_secret: str = os.getenv("SPARK_API_SECRET", "")
+    spark_api_url: str = "https://spark-api-open.xf-yun.com/v2/chat/completions"
 
 
 class AppSettings(BaseSettings):

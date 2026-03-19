@@ -22,9 +22,7 @@ const uploadService = {
       url: '/v1/upload',
       method: 'post',
       data: formData,
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      },
+      // 当使用FormData时，不要手动设置Content-Type，让浏览器自动处理
       // 可以在这里添加上传进度监听
       // onUploadProgress: (progressEvent) => {
       //   const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -45,10 +43,8 @@ const uploadService = {
     return apiClient({
       url: '/v1/preview',
       method: 'post',
-      data: formData,
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      }
+      data: formData
+      // 当使用FormData时，不要手动设置Content-Type，让浏览器自动处理
     });
   }
 };

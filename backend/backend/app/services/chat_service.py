@@ -1,12 +1,12 @@
 from fastapi import HTTPException
-from app.utils.llm_client import call_qwen
+from app.utils.llm_client import call_llm
 
 
-def handle_chat_message(message: str) -> dict:
+def handle_chat_message(message: str, model_id: str = "ali-qwen") -> dict:
     """处理普通聊天消息，调用大模型进行回复"""
     try:
         # 调用大模型进行回复
-        response = call_qwen(message)
+        response = call_llm(model_id, message)
         return {
             "status": "ok",
             "message": "消息处理成功",

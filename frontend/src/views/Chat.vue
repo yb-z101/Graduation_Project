@@ -46,7 +46,24 @@
           >
             <div class="message-body">
               <div class="message-content">
-                <div v-if="msg.role === 'user'" class="user-text">{{ msg.content }}</div>
+                <div v-if="msg.role === 'user'" class="user-content">
+                  <div v-if="msg.type === 'text' || !msg.type" class="user-text">{{ msg.content }}</div>
+                  
+                  <div v-if="msg.type === 'file'" class="user-file-message" @click="handleFileClick(msg)">
+                    <div class="file-icon" :class="msg.fileType">
+                      <el-icon v-if="msg.fileType === 'data'" size="20"><Document /></el-icon>
+                      <el-icon v-else-if="msg.fileType === 'sql'" size="20"><Document /></el-icon>
+                      <el-icon v-else-if="msg.fileType === 'text'" size="20"><Document /></el-icon>
+                      <el-icon v-else-if="msg.fileType === 'code'" size="20"><Document /></el-icon>
+                      <el-icon v-else size="20"><Document /></el-icon>
+                    </div>
+                    <div class="file-info">
+                      <div class="file-name">{{ msg.fileName }}</div>
+                      <div class="file-description">{{ msg.content }}</div>
+                    </div>
+                    <el-icon class="file-arrow"><ArrowRight /></el-icon>
+                  </div>
+                </div>
                 
                 <div v-else class="ai-content">
                   <p v-if="msg.type === 'text' || !msg.type">{{ msg.content }}</p>
@@ -268,7 +285,7 @@
 
 <script setup>
 import { ref, nextTick, computed, onMounted, watch } from 'vue'
-import { DataAnalysis, Close } from '@element-plus/icons-vue'
+import { DataAnalysis, Close, Document, ArrowRight } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
 import DataTable from '../components/DataTable.vue'
@@ -521,7 +538,8 @@ const themeGradient = computed(() => theme.value === 'dark'
 const modelList = ref([
   { id: 'ali-qwen', name: '阿里云 Qwen Turbo', description: '阿里云开发的大语言模型，适合数据分析和对话' },
   { id: 'deepseek', name: 'DeepSeek R1', description: 'DeepSeek开发的大语言模型，擅长代码和数学推理' },
-  { id: 'volcengine', name: '火山引擎 Doubao', description: '火山引擎开发的大语言模型，多语言支持' }
+  { id: 'volcengine', name: '火山引擎 Doubao', description: '火山引擎开发的大语言模型，多语言支持' },
+  { id: 'spark', name: '星火大模型', description: '讯飞开发的大语言模型，多模态能力强' }
 ])
 
 const currentModel = ref(modelList.value[0])
@@ -713,84 +731,141 @@ const closePreview = () => {
 const handleSendWithFiles = async (text, files) => {
   const trimmedText = text.trim()
   
-  // 添加用户消息到列表
-  messages.value.push({ role: 'user', content: trimmedText || '上传了文件' })
+  // 先添加文件消息到用户消息处
+  for (const file of files) {
+    messages.value.push({
+      role: 'user',
+      type: 'file',
+      content: `上传了文件`,
+      fileName: file.name,
+      fileType: getFileType(file.name)
+    })
+  }
+  
+  // 如果有文本消息，也添加到用户消息处
+  if (trimmedText) {
+    messages.value.push({ role: 'user', content: trimmedText })
+  }
+  
   chatStore.setLoading(true)
   scrollToBottom()
 
   try {
-    // 逐个上传文件
+    // 逐个上传文件，确保所有文件上传完成
+    let allFilesUploaded = true
     for (const file of files) {
       showMessage(`正在上传文件：${file.name}`, 'info')
-      const uploadResponse = await uploadService.uploadFile(file)
-      
-      if (uploadResponse.status === 'ok') {
-        handleFileUploaded(uploadResponse)
-      } else {
-        showMessage(`上传失败：${uploadResponse.message}`, 'error')
+      try {
+        const uploadResponse = await uploadService.uploadFile(file)
+        
+        if (uploadResponse.status === 'ok') {
+          // 上传成功后，更新文件消息
+          const fileMessageIndex = messages.value.findIndex(msg => 
+            msg.role === 'user' && msg.type === 'file' && msg.fileName === file.name
+          )
+          if (fileMessageIndex !== -1) {
+            // 检查是否为SQL文件
+            const isSqlFile = file.name.toLowerCase().endsWith('.sql')
+            messages.value[fileMessageIndex].content = isSqlFile 
+              ? `文件《${file.name}》已上传。` 
+              : `文件《${file.name}》已上传。共 ${uploadResponse.row_count} 条数据。`
+            messages.value[fileMessageIndex].sessionId = uploadResponse.session_id
+          }
+          
+          // 更新会话状态
+          const sessionId = uploadResponse.session_id
+          const fileName = uploadResponse.filename
+          sessionStore.setCurrentSession(sessionId, fileName, uploadResponse.data || [], uploadResponse.columns || [])
+          sessionStore.addSession({ id: sessionId, fileName, timestamp: new Date() })
+        } else {
+          showMessage(`上传失败：${uploadResponse.message}`, 'error')
+          allFilesUploaded = false
+        }
+      } catch (uploadError) {
+        showMessage(`上传失败：${uploadError.message}`, 'error')
+        allFilesUploaded = false
       }
+      // 等待一小段时间，确保会话状态更新
+      await new Promise(resolve => setTimeout(resolve, 500))
     }
     
-    // 如果有文本消息，发送消息
-    if (trimmedText) {
+    // 如果有文本消息且所有文件上传完成，再发送消息
+    if (trimmedText && allFilesUploaded) {
+      // 确保会话ID已经设置
       if (sessionStore.currentSessionId) {
         // 有会话ID，调用分析API
-        const response = await sessionService.sendMessage(sessionStore.currentSessionId, trimmedText)
-        
-        if (response.status === 'ok') {
-          // 1) 先展示文本总结（优先 summary，其次 error）
-          messages.value.push({
-            role: 'ai',
-            type: 'text',
-            content: response.analysis_summary || response.error || '分析完成'
-          })
-
-          // 2) 有结果就展示表格
-          if (response.result) {
-            const { records, columns } = dfDictToRecords(response.result)
-            if (records.length && columns.length) {
-              messages.value.push({
-                role: 'ai',
-                type: 'table',
-                title: '分析结果表格',
-                data: records,
-                columns
-              })
-            }
-          }
-
-          // 3) 有图表配置就展示图表
-          if (response.chart_option) {
+        try {
+          const response = await sessionService.sendMessage(sessionStore.currentSessionId, trimmedText, currentModel.value.id)
+          
+          if (response.status === 'ok') {
+            // 1) 先展示文本总结（优先 summary，其次 error）
             messages.value.push({
               role: 'ai',
-              type: 'chart',
-              title: '分析结果图表',
-              chartOption: response.chart_option
+              type: 'text',
+              content: response.analysis_summary || response.error || '分析完成'
+            })
+
+            // 2) 有结果就展示表格
+            if (response.result) {
+              const { records, columns } = dfDictToRecords(response.result)
+              if (records.length && columns.length) {
+                messages.value.push({
+                  role: 'ai',
+                  type: 'table',
+                  title: '分析结果表格',
+                  data: records,
+                  columns
+                })
+              }
+            }
+
+            // 3) 有图表配置就展示图表
+            if (response.chart_option) {
+              messages.value.push({
+                role: 'ai',
+                type: 'chart',
+                title: '分析结果图表',
+                chartOption: response.chart_option
+              })
+            }
+          } else {
+            messages.value.push({
+              role: 'ai',
+              type: 'text',
+              content: `错误：${response.message || '处理失败'}`
             })
           }
-      } else {
-        messages.value.push({
-          role: 'ai',
-          type: 'text',
-          content: `错误：${response.message || '处理失败'}`
-        })
-      }
-      } else {
-        // 没有会话ID，调用普通聊天API
-        const response = await chatService.sendChatMessage(trimmedText)
-        
-        if (response.status === 'ok') {
-          const aiMessage = {
-            role: 'ai',
-            type: 'text',
-            content: response.response
-          }
-          messages.value.push(aiMessage)
-        } else {
+        } catch (messageError) {
           messages.value.push({
             role: 'ai',
             type: 'text',
-            content: `错误：${response.message || '处理失败'}`
+            content: `错误：${messageError.message}`
+          })
+        }
+      } else {
+        // 没有会话ID，调用普通聊天API
+        try {
+          const response = await chatService.sendChatMessage(trimmedText)
+          
+          if (response.status === 'ok') {
+            const aiMessage = {
+              role: 'ai',
+              type: 'text',
+              content: response.response
+            }
+            messages.value.push(aiMessage)
+          } else {
+            messages.value.push({
+              role: 'ai',
+              type: 'text',
+              content: `错误：${response.message || '处理失败'}`
+            })
+          }
+        } catch (messageError) {
+          messages.value.push({
+            role: 'ai',
+            type: 'text',
+            content: `错误：${messageError.message}`
           })
         }
       }
@@ -814,18 +889,121 @@ const handleFileUploaded = async (responseData) => {
   const sessionId = responseData.session_id;
   const fileName = responseData.filename;
   
+  // 生成会话名称
+  let sessionDisplayName = fileName;
+  const lowerFileName = fileName.toLowerCase();
+  if (lowerFileName.endsWith('.csv')) {
+    sessionDisplayName = `${fileName}文件分析`;
+  } else if (lowerFileName.endsWith('.sql')) {
+    sessionDisplayName = `${fileName}文件分析`;
+  } else if (lowerFileName.endsWith('.xlsx') || lowerFileName.endsWith('.xls')) {
+    sessionDisplayName = `${fileName}文件分析`;
+  }
+  
   sessionStore.setCurrentSession(sessionId, fileName, responseData.data || [], responseData.columns || []);
-  sessionStore.addSession({ id: sessionId, fileName, timestamp: new Date() });
+  sessionStore.addSession({ id: sessionId, fileName, displayName: sessionDisplayName, timestamp: new Date() });
 
   // 检查是否为SQL文件
-  const isSqlFile = fileName.toLowerCase().endsWith('.sql');
+  const isSqlFile = lowerFileName.endsWith('.sql');
+  
+  // 添加文件消息到聊天页面
   messages.value.push({
     role: 'ai',
-    type: 'text',
-    content: isSqlFile ? `文件《${fileName}》已上传。` : `文件《${fileName}》已上传。共 ${responseData.row_count} 条数据。`
+    type: 'file',
+    content: isSqlFile ? `文件《${fileName}》已上传。` : `文件《${fileName}》已上传。共 ${responseData.row_count} 条数据。`,
+    fileName: fileName,
+    fileType: getFileType(fileName),
+    sessionId: sessionId
   });
   scrollToBottom();
   showMessage('文件上传成功', 'success');
+};
+
+// 获取文件类型
+const getFileType = (fileName) => {
+  const extension = fileName.toLowerCase().split('.').pop();
+  if (['csv', 'xlsx', 'xls'].includes(extension)) {
+    return 'data';
+  } else if (['sql'].includes(extension)) {
+    return 'sql';
+  } else if (['txt', 'md', 'markdown'].includes(extension)) {
+    return 'text';
+  } else if (['py', 'js', 'ts', 'html', 'css', 'json'].includes(extension)) {
+    return 'code';
+  } else {
+    return 'file';
+  }
+};
+
+// 处理文件点击事件
+const handleFileClick = async (fileMessage) => {
+  showPreview.value = true
+  previewFile.value = { name: fileMessage.fileName }
+  previewLoading.value = true
+  previewError.value = ''
+  
+  try {
+    // 检查是否为SQL文件
+    const isSqlFile = fileMessage.fileName.toLowerCase().endsWith('.sql');
+    
+    if (isSqlFile) {
+      // 对于SQL文件，我们需要从后端获取内容
+      // 这里我们可以使用一个特殊的预览方式
+      // 暂时显示一个提示，因为我们没有实际的文件内容
+      previewData.value = {
+        status: "ok",
+        file_type: "sql",
+        filename: fileMessage.fileName,
+        structure: {
+          content: "-- SQL文件内容需要重新上传才能预览"
+        }
+      };
+    } else {
+      // 对于数据文件，使用会话中的数据
+      if (sessionStore.previewData && sessionStore.previewData.length > 0) {
+        // 使用会话中的预览数据
+        const columns = sessionStore.columns.map(col => ({ name: col, type: "unknown" }));
+        previewData.value = {
+          status: "ok",
+          file_type: "data",
+          filename: fileMessage.fileName,
+          structure: {
+            columns: columns,
+            row_count: sessionStore.previewData.length,
+            preview_data: sessionStore.previewData.slice(0, 5)
+          }
+        };
+      } else {
+        // 如果没有预览数据，显示错误
+        throw new Error("没有可用的文件预览数据");
+      }
+    }
+  } catch (error) {
+    previewError.value = `预览失败：${error.message}`;
+  } finally {
+    previewLoading.value = false;
+  }
+};
+
+// 获取文件MIME类型
+const getFileMimeType = (fileName) => {
+  const extension = fileName.toLowerCase().split('.').pop();
+  const mimeTypes = {
+    csv: 'text/csv',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    xls: 'application/vnd.ms-excel',
+    sql: 'text/plain',
+    txt: 'text/plain',
+    md: 'text/markdown',
+    markdown: 'text/markdown',
+    py: 'text/x-python',
+    js: 'text/javascript',
+    ts: 'text/typescript',
+    html: 'text/html',
+    css: 'text/css',
+    json: 'application/json'
+  };
+  return mimeTypes[extension] || 'application/octet-stream';
 };
 
 // 修改后的发送消息逻辑
@@ -939,7 +1117,7 @@ const handleSendMessage = async (text) => {
       messages.value.push(aiMessage)
     } else if (sessionStore.currentSessionId) {
       // 有会话ID，调用分析API
-      const response = await sessionService.sendMessage(sessionStore.currentSessionId, trimmedText)
+      const response = await sessionService.sendMessage(sessionStore.currentSessionId, trimmedText, currentModel.value.id)
       
       if (response.status === 'ok') {
         // 1) 先展示文本总结（优先 summary，其次 error）
@@ -981,7 +1159,7 @@ const handleSendMessage = async (text) => {
     }
     } else {
       // 没有会话ID但不是第一次发送消息，调用普通聊天API
-      const response = await chatService.sendChatMessage(trimmedText)
+      const response = await chatService.sendChatMessage(trimmedText, currentModel.value.id)
       
       if (response.status === 'ok') {
         const aiMessage = {
@@ -1026,6 +1204,15 @@ const handleDatabaseConnection = async (connectionInfo) => {
   
   // 保存连接信息
   saveConnection(connectionInfo.connectionInfo)
+  
+  // 生成数据库会话名称
+  const databaseName = connectionInfo.connectionInfo.database;
+  const sessionDisplayName = `${databaseName}数据库数据分析`;
+  
+  // 创建数据库会话
+  const sessionId = `db_${Date.now()}`;
+  sessionStore.setCurrentSession(sessionId, databaseName, [], []);
+  sessionStore.addSession({ id: sessionId, fileName: databaseName, displayName: sessionDisplayName, timestamp: new Date() });
   
   // 加载数据库表结构
   try {
@@ -1407,6 +1594,79 @@ watch(theme, (newVal) => {
   color: #ffffff;
   max-width: 620px;
   word-break: break-word;
+  margin-bottom: 12px;
+}
+
+/* 用户文件消息样式 */
+.user-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.user-file-message {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background-color: rgba(79, 70, 229, 0.1);
+  border: 1px solid rgba(79, 70, 229, 0.3);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  max-width: 620px;
+  width: 100%;
+  margin-bottom: 12px;
+}
+
+.user-file-message:hover {
+  background-color: rgba(79, 70, 229, 0.15);
+  border-color: var(--accent-color);
+  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.2);
+  transform: translateY(-1px);
+}
+
+.user-file-message .file-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.user-file-message .file-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.user-file-message .file-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-file-message .file-description {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.user-file-message .file-arrow {
+  color: var(--text-muted);
+  transition: color 0.3s ease;
+}
+
+.user-file-message:hover .file-arrow {
+  color: var(--accent-color);
+  transform: translateX(4px);
+  transition: all 0.3s ease;
 }
 
 /* AI 文本消息也使用气泡（避免看起来像纯段落） */
@@ -1429,6 +1689,93 @@ watch(theme, (newVal) => {
   border: 1px solid var(--border-color);
   max-width: 720px;
   width: 100%;
+}
+
+/* 文件消息样式 */
+.file-message {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background-color: var(--bg-hover);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  border: 1px solid var(--border-color);
+}
+
+.file-message:hover {
+  background-color: var(--bg-secondary);
+  box-shadow: 0 2px 8px var(--shadow-color);
+  transform: translateY(-1px);
+}
+
+.file-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.file-icon.data {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  color: white;
+}
+
+.file-icon.sql {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: white;
+}
+
+.file-icon.text {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: white;
+}
+
+.file-icon.code {
+  background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+  color: white;
+}
+
+.file-icon.file {
+  background: linear-gradient(135deg, #6b7280, #4b5563);
+  color: white;
+}
+
+.file-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.file-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-description {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.file-arrow {
+  color: var(--text-muted);
+  transition: color 0.3s ease;
+}
+
+.file-message:hover .file-arrow {
+  color: var(--accent-color);
+  transform: translateX(4px);
+  transition: all 0.3s ease;
 }
 
 .block-title {

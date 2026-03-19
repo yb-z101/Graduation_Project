@@ -126,8 +126,16 @@ class DatabaseService:
             
             engine = self.connections[connection_id]["engine"]
             
+            # 处理多条SQL语句，只执行最后一条
+            queries = [q.strip() for q in query.split(';') if q.strip()]
+            if not queries:
+                raise HTTPException(status_code=400, detail="SQL语句为空")
+            
+            # 只执行最后一条SQL语句
+            last_query = queries[-1]
+            
             # 执行查询
-            df = pd.read_sql_query(query, engine)
+            df = pd.read_sql_query(last_query, engine)
             
             # 限制返回行数
             if len(df) > limit:

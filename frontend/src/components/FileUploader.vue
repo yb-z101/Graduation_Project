@@ -15,7 +15,7 @@
       </el-button>
       <template #tip>
         <div class="el-upload__tip">
-          请上传 CSV 或 Excel 文件
+          请上传 CSV、Excel 或 SQL 文件
         </div>
       </template>
     </el-upload>
@@ -39,8 +39,9 @@ const uploadUrl = '/api/v1/upload'
 const beforeUpload = (file) => {
   const isCSV = file.type === 'text/csv' || file.name.endsWith('.csv')
   const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls')
-  if (!isCSV && !isExcel) {
-    ElMessage.error('只能上传 CSV 或 Excel 文件!')
+  const isSQL = file.name.endsWith('.sql')
+  if (!isCSV && !isExcel && !isSQL) {
+    ElMessage.error('只能上传 CSV、Excel 或 SQL 文件!')
     return false
   }
   hasFile.value = true

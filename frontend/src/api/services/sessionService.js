@@ -9,12 +9,14 @@ const sessionService = {
    * 发送消息到会话
    * @param {string} sessionId - 会话 ID
    * @param {string} message - 消息内容
+   * @param {string} modelId - 模型 ID
    * @returns {Promise} - 返回 API 响应
    */
-  sendMessage: (sessionId, message) => {
+  sendMessage: (sessionId, message, modelId = 'ali-qwen') => {
     const formData = new FormData();
     formData.append('session_id', sessionId);
     formData.append('message', message);
+    formData.append('model_id', modelId);
     
     return apiClient({
       url: '/v1/session/send_message',
