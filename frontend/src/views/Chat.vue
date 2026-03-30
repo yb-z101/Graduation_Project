@@ -146,7 +146,7 @@
               <h4>列信息</h4>
               <ul class="column-list">
                 <li v-for="(col, index) in previewData.structure.columns" :key="index">
-                  {{ col.name }} ({{ col.type }})
+                  {{ col.name }}
                 </li>
               </ul>
             </div>
@@ -633,6 +633,8 @@ const loadSession = (session) => {
   sessionService.getSessionMessages(session.id).then((resp) => {
     if (resp.status === 'ok' && Array.isArray(resp.messages)) {
       const rebuilt = []
+      let loadedSqlContent = null
+      
       resp.messages.forEach((m) => {
         if (m.role === 1) {
           rebuilt.push({ role: 'user', content: m.content })
@@ -665,8 +667,20 @@ const loadSession = (session) => {
           return
         }
         // 系统消息
-        rebuilt.push({ role: 'ai', type: 'text', content: m.content })
+        const systemMsg = { role: 'ai', type: 'text', content: m.content, extra: m.extra }
+        rebuilt.push(systemMsg)
+        
+        // 保存SQL内容
+        if (m.extra && m.extra.sql_content) {
+          loadedSqlContent = m.extra.sql_content
+        }
       })
+      
+      // 更新sessionStore中的SQL内容
+      if (loadedSqlContent) {
+        sessionStore.sqlContent = loadedSqlContent
+      }
+      
       messages.value = rebuilt
       scrollToBottom()
     } else {
@@ -759,23 +773,46 @@ const handleSendWithFiles = async (text, files) => {
         const uploadResponse = await uploadService.uploadFile(file)
         
         if (uploadResponse.status === 'ok') {
+          // 显示上传成功提示（与"正在上传"相同位置）
+          showMessage(`✅ 文件上传成功：${file.name}`, 'success');
+          
+          // 检查是否为SQL文件
+          const isSqlFile = file.name.toLowerCase().endsWith('.sql')
+          
           // 上传成功后，更新文件消息
           const fileMessageIndex = messages.value.findIndex(msg => 
             msg.role === 'user' && msg.type === 'file' && msg.fileName === file.name
           )
           if (fileMessageIndex !== -1) {
-            // 检查是否为SQL文件
-            const isSqlFile = file.name.toLowerCase().endsWith('.sql')
             messages.value[fileMessageIndex].content = isSqlFile 
               ? `文件《${file.name}》已上传。` 
               : `文件《${file.name}》已上传。共 ${uploadResponse.row_count} 条数据。`
             messages.value[fileMessageIndex].sessionId = uploadResponse.session_id
+            
+            // 如果是SQL文件，保存SQL内容到extra中
+            if (isSqlFile && uploadResponse.tables) {
+              // 使用后端返回的SQL内容
+              messages.value.push({
+                role: 'ai',
+                type: 'text',
+                content: `已上传SQL文件：${file.name}（${uploadResponse.tables.length}个表）`,
+                extra: {
+                  sql_content: uploadResponse.sql_content || '-- SQL文件内容'
+                }
+              })
+            }
           }
           
           // 更新会话状态
           const sessionId = uploadResponse.session_id
           const fileName = uploadResponse.filename
-          sessionStore.setCurrentSession(sessionId, fileName, uploadResponse.data || [], uploadResponse.columns || [])
+          sessionStore.setCurrentSession(
+            sessionId, 
+            fileName, 
+            uploadResponse.data || [], 
+            uploadResponse.columns || [],
+            uploadResponse.sql_content || null  // 传入SQL内容
+          )
           sessionStore.addSession({ id: sessionId, fileName, timestamp: new Date() })
         } else {
           showMessage(`上传失败：${uploadResponse.message}`, 'error')
@@ -947,22 +984,41 @@ const handleFileClick = async (fileMessage) => {
     const isSqlFile = fileMessage.fileName.toLowerCase().endsWith('.sql');
     
     if (isSqlFile) {
-      // 对于SQL文件，我们需要从后端获取内容
-      // 这里我们可以使用一个特殊的预览方式
-      // 暂时显示一个提示，因为我们没有实际的文件内容
+      // 优先从sessionStore获取SQL内容
+      let sqlContent = sessionStore.sqlContent || "-- SQL文件内容需要重新上传才能预览";
+      
+      // 如果sessionStore中没有，再从messages中查找
+      if (sqlContent === "-- SQL文件内容需要重新上传才能预览") {
+        for (const msg of messages.value) {
+          if (msg.extra && msg.extra.sql_content) {
+            sqlContent = msg.extra.sql_content;
+            break;
+          }
+        }
+      }
+      
       previewData.value = {
         status: "ok",
         file_type: "sql",
         filename: fileMessage.fileName,
         structure: {
-          content: "-- SQL文件内容需要重新上传才能预览"
+          content: sqlContent
         }
       };
     } else {
       // 对于数据文件，使用会话中的数据
       if (sessionStore.previewData && sessionStore.previewData.length > 0) {
-        // 使用会话中的预览数据
-        const columns = sessionStore.columns.map(col => ({ name: col, type: "unknown" }));
+        // 使用会话中的预览数据 - 确保列格式与上传前预览一致
+        // 检查columns的格式，确保只包含name字段
+        let columns = sessionStore.columns;
+        if (columns.length > 0 && columns[0].name !== undefined) {
+          // 如果已经是对象格式，提取name字段
+          columns = columns.map(col => ({ name: col.name }));
+        } else if (columns.length > 0 && typeof columns[0] === 'string') {
+          // 如果是字符串格式，转换为对象格式
+          columns = columns.map(col => ({ name: col }));
+        }
+        
         previewData.value = {
           status: "ok",
           file_type: "data",

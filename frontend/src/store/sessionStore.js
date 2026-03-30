@@ -7,7 +7,8 @@ export const useSessionStore = defineStore('session', {
     previewData: [],
     columns: [],
     currentSessionId: null,
-    sessions: []
+    sessions: [],
+    sqlContent: null  // 新增：保存SQL文件内容
   }),
   actions: {
     // 初始化时从 localStorage 加载会话
@@ -45,14 +46,16 @@ export const useSessionStore = defineStore('session', {
       this.filename = ''
       this.previewData = []
       this.columns = []
+      this.sqlContent = null
     },
     
-    setCurrentSession(sessionId, fileName, data, columns) {
+    setCurrentSession(sessionId, fileName, data, columns, sqlContent = null) {
       this.currentSessionId = sessionId
       this.sessionId = sessionId
       this.filename = fileName
       this.previewData = data
       this.columns = columns
+      this.sqlContent = sqlContent
       
       // 确保当前会话在sessions数组中也有displayName
       const sessionIndex = this.sessions.findIndex(s => s.id === sessionId)

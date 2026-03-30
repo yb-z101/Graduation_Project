@@ -62,7 +62,13 @@ const submitUpload = async () => {
       ElMessage.info('正在上传文件...')
       const response = await uploadService.uploadFile(file)
       if (response.status === 'ok') {
-        ElMessage.success('文件上传成功')
+        // 详细的成功提示
+        const rowCount = response.row_count ? `共 ${response.row_count} 条数据` : ''
+        ElMessage.success({
+          message: `✅ ${file.name} 上传成功！${rowCount}`,
+          duration: 1000,
+          showClose: true
+        })
         // 触发上传成功事件，传递会话信息
         emit('upload-success', response)
         // 清空上传列表
