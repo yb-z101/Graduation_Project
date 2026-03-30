@@ -75,7 +75,7 @@
 
                   <div v-if="msg.type === 'chart'" class="content-block">
                     <div class="block-title">{{ msg.title || '数据图表' }}</div>
-                    <DataChart :option="msg.chartOption" />
+                    <DataChart :option="msg.chartOption" :chart-lib-id="currentChartLib.id" />
                     <p v-if="msg.content" class="text-part">{{ msg.content }}</p>
                   </div>
                 </div>
@@ -85,8 +85,15 @@
 
           <div v-if="chatStore.isLoading" class="message-row ai">
             <div class="message-body">
-              <div class="message-content loading">
-                <el-skeleton animated :rows="3" />
+              <div class="message-content thinking">
+                <div class="thinking-wrapper">
+                  <div class="thinking-dots">
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                  </div>
+                  <div class="thinking-text">{{ thinkingText || '正在思考中...' }}</div>
+                </div>
               </div>
             </div>
           </div>
@@ -98,12 +105,15 @@
       <!-- 底部输入区 -->
       <ChatInput 
         :loading="chatStore.isLoading"
+        :chart-lib-list="chartLibList"
+        :current-chart-lib="currentChartLib"
         @send-message="handleSendMessage"
         @file-select="handleFileSelect"
         @quick-ask="quickAsk"
         @preview-file="handlePreviewFile"
         @send-with-files="handleSendWithFiles"
         @database-connect="showDatabaseSidebar = true"
+        @select-chart-lib="selectChartLib"
         ref="chatInputRef"
       />
 
@@ -284,7 +294,7 @@
 </template>
 
 <script setup>
-import { ref, nextTick, computed, onMounted, watch } from 'vue'
+import { ref, nextTick, computed, onMounted, onUnmounted, watch } from 'vue'
 import { DataAnalysis, Close, Document, ArrowRight } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
@@ -490,6 +500,37 @@ const messages = ref([])
 const chatWindowRef = ref(null)
 const sidebarCollapsed = ref(false)
 
+// 思考状态相关
+const thinkingText = ref('')
+const thinkingTimer = ref(null)
+const thinkingMessages = [
+  '正在思考中...',
+  '让我分析一下...',
+  '正在处理数据...',
+  '正在生成分析报告...',
+  '请稍等片刻...',
+  '马上就好...'
+]
+
+// 开始思考状态
+const startThinking = () => {
+  let index = 0
+  thinkingText.value = thinkingMessages[0]
+  thinkingTimer.value = setInterval(() => {
+    index = (index + 1) % thinkingMessages.length
+    thinkingText.value = thinkingMessages[index]
+  }, 2000)
+}
+
+// 停止思考状态
+const stopThinking = () => {
+  if (thinkingTimer.value) {
+    clearInterval(thinkingTimer.value)
+    thinkingTimer.value = null
+  }
+  thinkingText.value = ''
+}
+
 // 文件预览相关状态
 const showPreview = ref(false)
 const previewFile = ref(null)
@@ -547,6 +588,18 @@ const currentModel = ref(modelList.value[0])
 const selectModel = (model) => {
   currentModel.value = model
   showMessage(`已切换到 ${model.name}`, 'success')
+}
+
+const chartLibList = ref([
+  { id: 'echarts', name: 'ECharts', description: 'Apache ECharts，功能强大的开源图表库' },
+  { id: 'antv-g2', name: 'AntV G2', description: '蚂蚁集团出品，数据驱动的高交互性图表库' }
+])
+
+const currentChartLib = ref(chartLibList.value[0])
+
+const selectChartLib = (lib) => {
+  currentChartLib.value = lib
+  showMessage(`已切换到 ${lib.name}`, 'success')
 }
 
 const startNewChat = () => {
@@ -762,6 +815,7 @@ const handleSendWithFiles = async (text, files) => {
   }
   
   chatStore.setLoading(true)
+  startThinking()
   scrollToBottom()
 
   try {
@@ -916,6 +970,7 @@ const handleSendWithFiles = async (text, files) => {
     })
   } finally {
     chatStore.setLoading(false)
+    stopThinking()
     nextTick(() => scrollToBottom())
   }
 }
@@ -1073,6 +1128,7 @@ const handleSendMessage = async (text) => {
     chatInputRef.value.clearInput()
   }
   chatStore.setLoading(true)
+  startThinking()
   scrollToBottom()
 
   try {
@@ -1241,6 +1297,7 @@ const handleSendMessage = async (text) => {
     })
   } finally {
     chatStore.setLoading(false)
+    stopThinking()
     nextTick(() => scrollToBottom())
   }
 }
@@ -1443,6 +1500,10 @@ const quickConnect = (connection) => {
 
 watch(theme, (newVal) => {
   localStorage.setItem('chat-theme', newVal)
+})
+
+onUnmounted(() => {
+  stopThinking()
 })
 </script>
 
@@ -2040,8 +2101,70 @@ watch(theme, (newVal) => {
 
 .connection-actions {
   display: flex;
-  gap: 10px;
-  margin-left: 16px;
+  gap: 8px;
+}
+
+/* 思考状态样式 */
+.thinking-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 0;
+}
+
+.thinking-dots {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-start;
+}
+
+.thinking-dots .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--accent-color);
+  animation: dot-bounce 1.4s infinite ease-in-out;
+}
+
+.thinking-dots .dot:nth-child(1) {
+  animation-delay: 0s;
+}
+
+.thinking-dots .dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.thinking-dots .dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes dot-bounce {
+  0%, 80%, 100% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.thinking-text {
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.5;
+  animation: text-fade 0.3s ease-in-out;
+}
+
+@keyframes text-fade {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .connect-button {

@@ -97,10 +97,31 @@
             </div>
           </div>
 
-          <div class="action-btn" @click="$emit('quick-ask', '生成图表')">
+          <div class="divider"></div>
+
+          <!-- 图表库选择器 -->
+          <div class="chart-lib-selector" @click="showChartLibDropdown = !showChartLibDropdown">
             <div class="btn-content">
-              <el-icon><Picture /></el-icon>
-              <span>生成图表</span>
+              <el-icon><TrendCharts /></el-icon>
+              <span>{{ currentChartLib.name }}</span>
+            </div>
+            <el-icon :class="{ 'rotate': showChartLibDropdown }"><ArrowDown /></el-icon>
+            
+            <!-- 图表库下拉菜单 -->
+            <div v-if="showChartLibDropdown" class="chart-lib-dropdown">
+              <div 
+                v-for="lib in chartLibList" 
+                :key="lib.id"
+                class="chart-lib-option"
+                :class="{ active: currentChartLib.id === lib.id }"
+                @click.stop="selectChartLib(lib)"
+              >
+                <div class="option-info">
+                  <div class="option-name">{{ lib.name }}</div>
+                  <div class="option-desc">{{ lib.description }}</div>
+                </div>
+                <el-icon v-if="currentChartLib.id === lib.id"><Check /></el-icon>
+              </div>
             </div>
           </div>
         </div>
@@ -110,16 +131,25 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref } from 'vue'
 import { 
-  Paperclip, Picture, Position, 
-  DataAnalysis, Document, Connection, Grid, Close, Database
+  Paperclip, Position, 
+  DataAnalysis, Document, Connection, Grid, Close, Database,
+  TrendCharts, ArrowDown, Check
 } from '@element-plus/icons-vue'
 
 const props = defineProps({
   loading: {
     type: Boolean,
     default: false
+  },
+  chartLibList: {
+    type: Array,
+    default: () => []
+  },
+  currentChartLib: {
+    type: Object,
+    required: true
   }
 })
 
@@ -129,12 +159,19 @@ const emit = defineEmits([
   'quick-ask',
   'preview-file',
   'send-with-files',
-  'database-connect'
+  'database-connect',
+  'select-chart-lib'
 ])
 
 const userInput = ref('')
 const showUploadMenu = ref(false)
+const showChartLibDropdown = ref(false)
 const pendingFiles = ref([])
+
+const selectChartLib = (lib) => {
+  emit('select-chart-lib', lib)
+  showChartLibDropdown.value = false
+}
 
 // 监听外部清除输入的事件
 const clearInput = () => {
@@ -204,6 +241,13 @@ const handleClickOutside = (event) => {
     const actionBtn = document.querySelector('.action-btn')
     if (uploadMenu && actionBtn && !uploadMenu.contains(event.target) && !actionBtn.contains(event.target)) {
       showUploadMenu.value = false
+    }
+  }
+  if (showChartLibDropdown.value) {
+    const chartLibDropdown = document.querySelector('.chart-lib-dropdown')
+    const chartLibSelector = document.querySelector('.chart-lib-selector')
+    if (chartLibDropdown && chartLibSelector && !chartLibDropdown.contains(event.target) && !chartLibSelector.contains(event.target)) {
+      showChartLibDropdown.value = false
     }
   }
 }
@@ -367,7 +411,8 @@ onUnmounted(() => {
   align-items: center;
 }
 
-.action-btn {
+.action-btn,
+.chart-lib-selector {
   background-color: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 16px;
@@ -381,7 +426,8 @@ onUnmounted(() => {
   justify-content: center;
 }
 
-.action-btn:hover {
+.action-btn:hover,
+.chart-lib-selector:hover {
   background-color: var(--bg-hover);
   border-color: var(--accent-color);
 }
@@ -395,7 +441,8 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
-.action-btn:hover .btn-content {
+.action-btn:hover .btn-content,
+.chart-lib-selector:hover .btn-content {
   color: var(--accent-color);
 }
 
@@ -404,6 +451,44 @@ onUnmounted(() => {
   height: 20px;
   background-color: var(--border-color);
   margin: 0 4px;
+}
+
+.chart-lib-selector .rotate {
+  transform: rotate(180deg);
+  transition: transform 0.2s;
+}
+
+.chart-lib-dropdown {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 8px;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 8px;
+  min-width: 280px;
+  box-shadow: 0 10px 40px var(--shadow-color);
+  z-index: 100;
+}
+
+.chart-lib-option {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.chart-lib-option:hover {
+  background-color: var(--bg-hover);
+}
+
+.chart-lib-option.active {
+  background-color: var(--bg-hover);
+  color: var(--accent-color);
 }
 
 /* 上传菜单 */

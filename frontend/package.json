@@ -8,6 +8,7 @@
     "lint": "vue-cli-service lint"
   },
   "dependencies": {
+    "@antv/g2": "^5.4.8",
     "@element-plus/icons-vue": "^2.3.2",
     "axios": "^1.13.6",
     "core-js": "^3.8.3",

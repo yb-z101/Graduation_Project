@@ -14,7 +14,7 @@
           :key="model.id"
           class="model-option"
           :class="{ active: currentModel.id === model.id }"
-          @click="$emit('select-model', model)"
+          @click.stop="$emit('select-model', model)"
         >
           <div class="option-info">
             <div class="option-name">{{ model.name }}</div>
