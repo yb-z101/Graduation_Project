@@ -101,7 +101,7 @@ const initG2 = async () => {
       g2Chart = new Chart({
         container: g2Ref.value,
         autoFit: true,
-        height: 400
+        height: 450
       })
       
       g2Chart.data(g2Config.data)
@@ -214,11 +214,12 @@ watch(
 <style scoped>
 .chart-wrapper {
   width: 100%;
+  max-width: 100%;
 }
 
 .chart-container {
   width: 100%;
-  height: 400px;
+  height: 450px;
   margin-top: 10px;
   background: #fff;
   border-radius: 4px;

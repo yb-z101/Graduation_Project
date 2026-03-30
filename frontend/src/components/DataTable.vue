@@ -4,17 +4,19 @@
       :data="data" 
       style="width: 100%" 
       border 
-      max-height="400"
-      size="small"
+      max-height="500"
+      size="default"
       stripe
+      :fit="true"
     >
       <el-table-column 
         v-for="col in columns" 
         :key="col"
         :prop="col" 
         :label="col"
-        :min-width="100"
+        :min-width="120"
         show-overflow-tooltip
+        resizable
       />
       
       <!-- 如果没有数据时的提示 -->
@@ -51,5 +53,21 @@ defineProps({
   background: #fff;
   border-radius: 4px;
   overflow: hidden;
+}
+
+:deep(.el-table) {
+  font-size: 14px;
+}
+
+:deep(.el-table th) {
+  background-color: #f5f7fa;
+  color: #303133;
+  font-weight: 600;
+}
+
+:deep(.el-table .cell) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 </style>

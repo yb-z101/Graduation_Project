@@ -75,7 +75,7 @@
 
                   <div v-if="msg.type === 'chart'" class="content-block">
                     <div class="block-title">{{ msg.title || '数据图表' }}</div>
-                    <DataChart :option="msg.chartOption" :chart-lib-id="currentChartLib.id" />
+                    <DataChart :option="msg.chartOption" :chart-lib-id="msg.chartLibId || currentChartLib.id" />
                     <p v-if="msg.content" class="text-part">{{ msg.content }}</p>
                   </div>
                 </div>
@@ -503,32 +503,48 @@ const sidebarCollapsed = ref(false)
 // 思考状态相关
 const thinkingText = ref('')
 const thinkingTimer = ref(null)
+const thinkingStepTimer = ref(null)
 const thinkingMessages = [
-  '正在思考中...',
-  '让我分析一下...',
-  '正在处理数据...',
-  '正在生成分析报告...',
-  '请稍等片刻...',
-  '马上就好...'
+  '正在思考中…',
+  '让我分析一下…',
+  '生成中…'
 ]
+let currentThinkingStep = 0
 
 // 开始思考状态
 const startThinking = () => {
-  let index = 0
+  currentThinkingStep = 0
   thinkingText.value = thinkingMessages[0]
-  thinkingTimer.value = setInterval(() => {
-    index = (index + 1) % thinkingMessages.length
-    thinkingText.value = thinkingMessages[index]
-  }, 2000)
+  
+  // 5秒后切换到第二个状态
+  thinkingStepTimer.value = setTimeout(() => {
+    if (currentThinkingStep < 1) {
+      currentThinkingStep = 1
+      thinkingText.value = thinkingMessages[1]
+      
+      // 再5秒后切换到第三个状态
+      thinkingStepTimer.value = setTimeout(() => {
+        if (currentThinkingStep < 2) {
+          currentThinkingStep = 2
+          thinkingText.value = thinkingMessages[2]
+        }
+      }, 5000)
+    }
+  }, 5000)
 }
 
 // 停止思考状态
 const stopThinking = () => {
+  if (thinkingStepTimer.value) {
+    clearTimeout(thinkingStepTimer.value)
+    thinkingStepTimer.value = null
+  }
   if (thinkingTimer.value) {
     clearInterval(thinkingTimer.value)
     thinkingTimer.value = null
   }
   thinkingText.value = ''
+  currentThinkingStep = 0
 }
 
 // 文件预览相关状态
@@ -1180,7 +1196,8 @@ const handleSendMessage = async (text) => {
                     role: 'ai',
                     type: 'chart',
                     title: '分析结果图表',
-                    chartOption: chartOption
+                    chartOption: chartOption,
+                    chartLibId: currentChartLib.value.id  // 保存当前选择的图表库
                   });
                 } else {
                   messages.value.push({
@@ -1259,7 +1276,8 @@ const handleSendMessage = async (text) => {
             role: 'ai',
             type: 'chart',
             title: '分析结果图表',
-            chartOption: response.chart_option
+            chartOption: response.chart_option,
+            chartLibId: currentChartLib.value.id  // 保存当前选择的图表库
           })
         }
     } else {
@@ -1633,7 +1651,7 @@ onUnmounted(() => {
 
 /* 消息列表 */
 .message-list {
-  max-width: 800px;
+  max-width: 1200px;
   margin: 0 auto;
   width: 100%;
   padding-bottom: 40px;
@@ -1804,7 +1822,7 @@ onUnmounted(() => {
   border-radius: 12px;
   padding: 16px;
   border: 1px solid var(--border-color);
-  max-width: 720px;
+  max-width: 100%;
   width: 100%;
 }
 

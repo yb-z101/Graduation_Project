@@ -10,186 +10,7 @@ from app.utils.chart_generator import generate_chart_config
 typing_state = Dict[str, Any]
 
 
-def generate_fallback_summary(result, original_data, user_query):
-    """当LLM生成失败时的备用摘要生成函数"""
-    analysis_summary = ""
-    
-    # 首先检查用户查询是否包含特定关键词
-    if '几个' in user_query or '多少' in user_query or '数量' in user_query:
-        if '员工' in user_query or '人' in user_query:
-            count = len(result)
-            analysis_summary = f"共 {count} 个"
-            if count > 0:
-                if '姓名' in result.columns:
-                    names = result['姓名'].tolist()
-                    analysis_summary += f"，分别是{', '.join(names)}"
-                elif 'name' in result.columns:
-                    names = result['name'].tolist()
-                    analysis_summary += f"，分别是{', '.join(names)}"
-        elif '部门' in user_query:
-            if '部门' in result.columns:
-                unique_depts = result['部门'].unique().tolist()
-                count = len(unique_depts)
-                analysis_summary = f"共 {count} 个部门"
-                if count > 0:
-                    analysis_summary += f"，分别是{', '.join(unique_depts)}"
-            elif 'department' in result.columns:
-                unique_depts = result['department'].unique().tolist()
-                count = len(unique_depts)
-                analysis_summary = f"共 {count} 个部门"
-                if count > 0:
-                    analysis_summary += f"，分别是{', '.join(unique_depts)}"
-            else:
-                analysis_summary = "数据中没有部门列"
-        else:
-            count = len(result)
-            analysis_summary = f"共 {count} 条"
-    elif '最小' in user_query:
-        if '年龄' in user_query:
-            if '年龄' in result.columns:
-                min_age_row = result.loc[result['年龄'].idxmin()]
-                name = min_age_row.get('姓名', min_age_row.get('name', '未知'))
-                age = min_age_row['年龄']
-                analysis_summary = f"{name}，{age}岁"
-            elif 'age' in result.columns:
-                min_age_row = result.loc[result['age'].idxmin()]
-                name = min_age_row.get('姓名', min_age_row.get('name', '未知'))
-                age = min_age_row['age']
-                analysis_summary = f"{name}，{age}岁"
-            else:
-                analysis_summary = "数据中没有年龄列"
-        else:
-            if len(result) > 0:
-                analysis_summary = f"最小值为 {result.min().iloc[0]}"
-    elif '最大' in user_query:
-        if '年龄' in user_query:
-            if '年龄' in result.columns:
-                max_age_row = result.loc[result['年龄'].idxmax()]
-                name = max_age_row.get('姓名', max_age_row.get('name', '未知'))
-                age = max_age_row['年龄']
-                analysis_summary = f"{name}，{age}岁"
-            elif 'age' in result.columns:
-                max_age_row = result.loc[result['age'].idxmax()]
-                name = max_age_row.get('姓名', max_age_row.get('name', '未知'))
-                age = max_age_row['age']
-                analysis_summary = f"{name}，{age}岁"
-            else:
-                analysis_summary = "数据中没有年龄列"
-        else:
-            if len(result) > 0:
-                analysis_summary = f"最大值为 {result.max().iloc[0]}"
-    elif '平均' in user_query or '均值' in user_query:
-        if '年龄' in user_query:
-            if '年龄' in result.columns:
-                avg_age = result['年龄'].mean()
-                analysis_summary = f"平均年龄为 {avg_age:.1f} 岁"
-            elif 'age' in result.columns:
-                avg_age = result['age'].mean()
-                analysis_summary = f"平均年龄为 {avg_age:.1f} 岁"
-            else:
-                analysis_summary = "数据中没有年龄列"
-        else:
-            if len(result) > 0:
-                avg_value = result.mean().iloc[0]
-                analysis_summary = f"平均值为 {avg_value:.1f}"
-    elif '数据分析' in user_query:
-        analysis_summary = f"已对数据进行分析，共 {len(result)} 条记录"
-        if '姓名' in result.columns:
-            names = result['姓名'].tolist()
-            analysis_summary += f"，包含：{', '.join(names)}"
-        elif 'name' in result.columns:
-            names = result['name'].tolist()
-            analysis_summary += f"，包含：{', '.join(names)}"
-    else:
-        if len(result) > 0:
-            same_columns = False
-            try:
-                same_columns = (
-                    len(result.columns) == len(original_data.columns)
-                    and result.columns.equals(original_data.columns)
-                )
-            except Exception:
-                same_columns = False
 
-            if len(result) == len(original_data) and same_columns:
-                analysis_summary = f"共 {len(result)} 条数据"
-                if '姓名' in result.columns:
-                    names = result['姓名'].tolist()
-                    analysis_summary += f"，分别是{', '.join(names)}"
-                elif 'name' in result.columns:
-                    names = result['name'].tolist()
-                    analysis_summary += f"，分别是{', '.join(names)}"
-            else:
-                analysis_summary = f"分析结果: 共 {len(result)} 条数据"
-                if len(result) <= 10:
-                    if '姓名' in result.columns:
-                        names = result['姓名'].tolist()
-                        analysis_summary += f"，分别是{', '.join(names)}"
-                    elif 'name' in result.columns:
-                        names = result['name'].tolist()
-                        analysis_summary += f"，分别是{', '.join(names)}"
-        else:
-            analysis_summary = "没有找到符合条件的数据"
-    
-    return analysis_summary
-
-
-def generate_accurate_summary(result, user_query):
-    """基于实际数据生成准确的摘要，避免LLM错误"""
-    try:
-        if len(result) == 0:
-            return None
-        
-        # 检查是否是排序或比较类问题
-        is_comparison_query = any(k in user_query for k in ['排列', '排序', '最高', '最低', '最大', '最小', '比较', '对比'])
-        is_average_query = '平均' in user_query or '均分' in user_query
-        is_chart_query = any(k in user_query for k in ['图表', '柱状图', '折线图', '饼图'])
-        
-        if not (is_comparison_query or is_average_query or is_chart_query):
-            return None
-        
-        # 如果有两列，假设第一列是分类，第二列是数值
-        if len(result.columns) >= 2:
-            cat_col = result.columns[0]
-            val_col = result.columns[1]
-            
-            try:
-                # 确保数值列是数值类型
-                result_sorted = result.copy()
-                result_sorted[val_col] = pd.to_numeric(result_sorted[val_col], errors='coerce')
-                result_sorted = result_sorted.dropna(subset=[val_col])
-                
-                if len(result_sorted) == 0:
-                    return None
-                
-                # 按数值排序
-                result_sorted = result_sorted.sort_values(by=val_col, ascending=False)
-                
-                items = []
-                for _, row in result_sorted.iterrows():
-                    cat_val = row[cat_col]
-                    num_val = row[val_col]
-                    items.append(f"{cat_val}为{num_val:.1f}分")
-                
-                if len(items) >= 1:
-                    max_item = result_sorted.iloc[0]
-                    min_item = result_sorted.iloc[-1]
-                    
-                    summary_parts = []
-                    if len(items) <= 5:
-                        summary_parts.append(f"根据数据分析结果，{', '.join(items[:-1])}，{items[-1]}。")
-                    else:
-                        summary_parts.append(f"根据数据分析结果，{items[0]}，{items[1]}，{items[2]}等。")
-                    
-                    summary_parts.append(f"{max_item[cat_col]}最高，{min_item[cat_col]}最低。")
-                    
-                    return ''.join(summary_parts)
-            except Exception:
-                return None
-        
-        return None
-    except Exception:
-        return None
 
 
 # 定义工作流节点
@@ -303,19 +124,10 @@ def process_query(state: typing_state) -> typing_state:
             wants_table = any(k in user_query for k in ["表格", "table", "列表"])
             wants_chart = any(k in user_query for k in ["图表", "画图", "可视化", "折线图", "柱状图", "饼图", "条形图", "散点图", "雷达图"])
             
-            # 生成自然语言分析摘要 - 优先使用基于实际数据的准确摘要
+            # 生成自然语言分析摘要
             try:
-                # 首先尝试使用基于实际数据的准确摘要
-                accurate_summary = generate_accurate_summary(result, user_query)
-                if accurate_summary:
-                    analysis_summary = accurate_summary
-                    # 如果用户没有明确要求表格，就不展示表格
-                    if not wants_table:
-                        state['skip_table'] = True
-                else:
-                    # 如果没有生成准确摘要，再尝试使用LLM
-                    result_str = result.to_string(max_rows=20, max_cols=10)
-                    prompt = f"""用户查询：{user_query}
+                result_str = result.to_string(max_rows=20, max_cols=10)
+                prompt = f"""用户查询：{user_query}
 
 数据分析结果：
 {result_str}
@@ -327,18 +139,18 @@ def process_query(state: typing_state) -> typing_state:
 4. 如果有多个信息点，用一句话连贯地总结
 5. 字数控制在50-150字之间
 """
-                    llm_answer = call_llm(model_id, prompt)
-                    if llm_answer and "调用大模型失败" not in llm_answer and len(llm_answer.strip()) > 10:
-                        analysis_summary = llm_answer.strip()
-                        # 如果用户没有明确要求表格，就不展示表格
-                        if not wants_table:
-                            state['skip_table'] = True
-                    else:
-                        # LLM回答失败，使用原有逻辑
-                        analysis_summary = generate_fallback_summary(result, original_data, user_query)
+                llm_answer = call_llm(model_id, prompt)
+                if llm_answer and "调用大模型失败" not in llm_answer and len(llm_answer.strip()) > 10:
+                    analysis_summary = llm_answer.strip()
+                    # 如果用户没有明确要求表格，就不展示表格
+                    if not wants_table:
+                        state['skip_table'] = True
+                else:
+                    # LLM回答失败，使用简单提示
+                    analysis_summary = "分析完成，请查看下方的数据表格和图表。"
             except Exception:
-                # 如果出错，使用原有逻辑
-                analysis_summary = generate_fallback_summary(result, original_data, user_query)
+                # 如果出错，使用简单提示
+                analysis_summary = "分析完成，请查看下方的数据表格和图表。"
         
         state['analysis_summary'] = analysis_summary
 
