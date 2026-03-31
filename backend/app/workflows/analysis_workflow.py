@@ -121,8 +121,8 @@ def process_query(state: typing_state) -> typing_state:
             state['analysis_result'] = result
 
             # 检查用户是否明确要求展示表格或图表
-            wants_table = any(k in user_query for k in ["表格", "table", "列表"])
-            wants_chart = any(k in user_query for k in ["图表", "画图", "可视化", "折线图", "柱状图", "饼图", "条形图", "散点图", "雷达图"])
+            wants_table = any(k in user_query for k in ["表格", "table", "列表", "查看数据", "数据预览"])
+            wants_chart = any(k in user_query for k in ["图表", "画图", "可视化", "折线图", "柱状图", "饼图", "条形图", "散点图", "雷达图", "展示", "绘制", "用图", "画图展示"])
             
             # 生成自然语言分析摘要
             try:
@@ -175,7 +175,7 @@ def generate_visualization(state: typing_state) -> typing_state:
     try:
         # 只有当用户明确请求生成图表时，才生成图表
         user_query = state.get('user_query', '') or ''
-        wants_chart = any(k in user_query for k in ["生成图表", "画图", "可视化", "折线图", "柱状图", "饼图"])
+        wants_chart = any(k in user_query for k in ["生成图表", "画图", "可视化", "折线图", "柱状图", "饼图", "条形图", "散点图", "雷达图", "展示", "绘制", "用图", "画图展示"])
         if state.get('analysis_result') is not None and wants_chart:
             state['chart_option'] = generate_chart_config(state.get('analysis_result'), state.get('user_query', ''))
     except Exception as e:

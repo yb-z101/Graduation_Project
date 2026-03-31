@@ -8,7 +8,7 @@ import axios from 'axios';
 const createApiClient = (config = {}) => {
   const defaultConfig = {
     baseURL: '/api',
-    timeout: 30000,
+    timeout: 120000,
     withCredentials: true,
     ...config
   };

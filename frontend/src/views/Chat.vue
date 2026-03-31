@@ -1822,8 +1822,10 @@ onUnmounted(() => {
   border-radius: 12px;
   padding: 16px;
   border: 1px solid var(--border-color);
-  max-width: 100%;
-  width: 100%;
+  max-width: 950px;
+  width: 950px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 /* 文件消息样式 */

@@ -1,7 +1,19 @@
 <template>
   <div class="chart-wrapper">
-    <div ref="echartsRef" v-show="chartLibId === 'echarts'" class="chart-container"></div>
-    <div ref="g2Ref" v-show="chartLibId === 'antv-g2'" class="chart-container"></div>
+    <div class="chart-toolbar">
+      <button class="chart-btn" @click="copyChart" title="复制图表">
+        <span class="btn-icon">📋</span>
+        <span class="btn-text">复制</span>
+      </button>
+      <button class="chart-btn" @click="downloadChart" title="下载图表">
+        <span class="btn-icon">⬇️</span>
+        <span class="btn-text">下载</span>
+      </button>
+    </div>
+    <div class="chart-scroll-container">
+      <div ref="echartsRef" v-show="chartLibId === 'echarts'" class="chart-container"></div>
+      <div ref="g2Ref" v-show="chartLibId === 'antv-g2'" class="chart-container"></div>
+    </div>
   </div>
 </template>
 
@@ -209,6 +221,78 @@ watch(
   },
   { deep: true, immediate: false }
 )
+
+const getChartImageBase64 = () => {
+  if (props.chartLibId === 'echarts' && echartsInstance) {
+    return echartsInstance.getDataURL({
+      type: 'png',
+      pixelRatio: 2,
+      backgroundColor: '#fff'
+    })
+  } else if (props.chartLibId === 'antv-g2' && g2Ref.value) {
+    const canvas = g2Ref.value.querySelector('canvas')
+    if (canvas) {
+      return canvas.toDataURL('image/png')
+    }
+  }
+  return null
+}
+
+const copyChart = async () => {
+  try {
+    const base64 = getChartImageBase64()
+    if (!base64) {
+      alert('图表未渲染完成，无法复制')
+      return
+    }
+
+    const response = await fetch(base64)
+    const blob = await response.blob()
+    
+    if (navigator.clipboard && window.ClipboardItem) {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          [blob.type]: blob
+        })
+      ])
+      alert('图表已复制到剪贴板！')
+    } else {
+      const textarea = document.createElement('textarea')
+      textarea.value = base64
+      document.body.appendChild(textarea)
+      textarea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textarea)
+      alert('图表已复制（Base64格式）')
+    }
+  } catch (error) {
+    console.error('复制图表失败:', error)
+    alert('复制失败，请重试')
+  }
+}
+
+const downloadChart = () => {
+  try {
+    const base64 = getChartImageBase64()
+    if (!base64) {
+      alert('图表未渲染完成，无法下载')
+      return
+    }
+
+    const link = document.createElement('a')
+    const chartTitle = props.option?.title?.text || 'chart'
+    const fileName = `${chartTitle.replace(/[^\w\u4e00-\u9fa5]/g, '_')}_${Date.now()}.png`
+    
+    link.href = base64
+    link.download = fileName
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  } catch (error) {
+    console.error('下载图表失败:', error)
+    alert('下载失败，请重试')
+  }
+}
 </script>
 
 <style scoped>
@@ -217,8 +301,54 @@ watch(
   max-width: 100%;
 }
 
-.chart-container {
+.chart-toolbar {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+.chart-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.chart-btn:hover {
+  background: #e2e8f0;
+  border-color: #cbd5e1;
+  color: #1e293b;
+}
+
+.chart-btn:active {
+  transform: scale(0.98);
+}
+
+.btn-icon {
+  font-size: 14px;
+}
+
+.btn-text {
+  font-weight: 500;
+}
+
+.chart-scroll-container {
   width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.chart-container {
+  width: 900px;
+  min-width: 900px;
   height: 450px;
   margin-top: 10px;
   background: #fff;
