@@ -1,5 +1,6 @@
 from typing import Optional, Dict, Any
 import pandas as pd
+import numpy as np
 import os
 import io
 import json
@@ -13,6 +14,19 @@ from app.core.config import settings
 from app.core.session_manager import create_session, get_session, update_session_dataframe
 from app.models.models import Session as SessionModel, SessionMessage
 from app.repositories.session_repository import SessionRepository
+from app.utils.data_cleaner import clean_dataframe
+
+
+def replace_nan_in_dict(obj):
+    """递归替换字典中的NaN值为None"""
+    if isinstance(obj, dict):
+        return {k: replace_nan_in_dict(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [replace_nan_in_dict(item) for item in obj]
+    elif isinstance(obj, float) and (np.isnan(obj) or np.isinf(obj)):
+        return None
+    else:
+        return obj
 
 
 def parse_csv_excel_from_bytes(content: bytes, filename: str) -> pd.DataFrame:
@@ -301,6 +315,17 @@ def handle_file_upload(file_content: bytes, filename: str, session_id: Optional[
             traceback.print_exc()
             error_detail = str(e) if str(e) else "未知错误"
             raise HTTPException(status_code=400, detail=f"文件解析失败：{error_detail}")
+        
+        # 数据清洗
+        try:
+            df, clean_report = clean_dataframe(df)
+            if df.empty:
+                raise HTTPException(status_code=400, detail="文件清洗后数据为空")
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            error_detail = str(e) if str(e) else "未知错误"
+            raise HTTPException(status_code=400, detail=f"数据清洗失败：{error_detail}")
 
         # 处理会话
         if session_id and get_session(session_id):
@@ -324,25 +349,40 @@ def handle_file_upload(file_content: bytes, filename: str, session_id: Optional[
             )
             session_repository.create_session(new_session)
 
+            # 构建清洗报告信息
+            clean_info = {
+                "original_rows": clean_report.get('original_rows', 0),
+                "cleaned_rows": clean_report.get('cleaned_rows', 0),
+                "rows_removed": clean_report.get('rows_removed', 0),
+                "columns_removed": clean_report.get('columns_removed', 0),
+                "operations": clean_report.get('operations', [])
+            }
+            
             session_repository.create_session_message(SessionMessage(
                 session_id=session_id,
                 role=3,
-                content=f"已上传文件：{filename}（{session_data['row_count']} 行）",
+                content=f"已上传文件：{filename}（清洗后 {clean_report['cleaned_rows']} 行，原始 {clean_report['original_rows']} 行）",
                 extra=json.dumps({
                     "type": "upload",
                     "filename": filename,
                     "row_count": session_data["row_count"],
-                    "columns": session_data["columns"]
+                    "columns": session_data["columns"],
+                    "clean_report": clean_info
                 }, ensure_ascii=False)
             ))
 
         session_data = get_session(session_id)
+        
+        # 替换所有NaN值为None，便于JSON序列化
+        preview_data = replace_nan_in_dict(session_data["preview"])
+        columns_data = replace_nan_in_dict(session_data["columns"])
+        
         return {
             "status": "ok",
             "message": "文件上传成功",
             "session_id": session_id,
             "filename": filename,
-            "data": session_data["preview"],
-            "columns": session_data["columns"],
+            "data": preview_data,
+            "columns": columns_data,
             "row_count": session_data["row_count"]
         }

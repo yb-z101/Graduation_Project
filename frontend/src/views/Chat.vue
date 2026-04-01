@@ -114,6 +114,7 @@
         @send-with-files="handleSendWithFiles"
         @database-connect="showDatabaseSidebar = true"
         @select-chart-lib="selectChartLib"
+        @stop="handleStop"
         ref="chatInputRef"
       />
 
@@ -147,33 +148,144 @@
         </div>
         <div v-else-if="previewData">
           <div v-if="previewData.file_type === 'data'" class="data-preview">
-            <div class="preview-section">
-              <h4>文件信息</h4>
-              <p>行数：{{ previewData.structure.row_count }}</p>
-              <p>列数：{{ previewData.structure.columns.length }}</p>
-            </div>
-            <div class="preview-section">
-              <h4>列信息</h4>
-              <ul class="column-list">
-                <li v-for="(col, index) in previewData.structure.columns" :key="index">
-                  {{ col.name }}
-                </li>
-              </ul>
-            </div>
-            <div class="preview-section">
-              <h4>前5行数据</h4>
-              <div class="preview-table">
-                <div class="table-header">
-                  <span v-for="(col, index) in previewData.structure.columns" :key="index">{{ col.name }}</span>
+            <!-- 数据清洗摘要 -->
+            <div v-if="previewData.structure.clean_summary" class="preview-section clean-summary">
+              <h4>📊 数据清洗摘要</h4>
+              <div class="summary-stats">
+                <div class="stat-item">
+                  <span class="stat-label">原始行数</span>
+                  <span class="stat-value">{{ previewData.structure.clean_summary.original_rows }}</span>
                 </div>
-                <div 
-                  v-for="(row, rowIndex) in previewData.structure.preview_data" 
-                  :key="rowIndex"
-                  class="table-row"
-                >
-                  <span v-for="(col, colIndex) in previewData.structure.columns" :key="colIndex">
-                    {{ row[col.name] }}
-                  </span>
+                <div class="stat-item">
+                  <span class="stat-label">清洗后行数</span>
+                  <span class="stat-value success">{{ previewData.structure.clean_summary.cleaned_rows }}</span>
+                </div>
+                <div class="stat-item" v-if="previewData.structure.clean_summary.rows_removed > 0">
+                  <span class="stat-label">删除行数</span>
+                  <span class="stat-value warning">{{ previewData.structure.clean_summary.rows_removed }}</span>
+                </div>
+                <div class="stat-item" v-if="previewData.structure.clean_summary.columns_removed > 0">
+                  <span class="stat-label">删除列数</span>
+                  <span class="stat-value warning">{{ previewData.structure.clean_summary.columns_removed }}</span>
+                </div>
+              </div>
+              <div v-if="previewData.structure.clean_summary.operations && previewData.structure.clean_summary.operations.length > 0" class="operations-list">
+                <h5>执行的清洗操作：</h5>
+                <ul>
+                  <li v-for="(op, idx) in previewData.structure.clean_summary.operations" :key="idx">
+                    {{ getOperationDescription(op) }}
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            <!-- 原始数据 vs 清洗后数据 - Tab切换 或 兼容旧格式 -->
+            <div v-if="previewData.structure.original && previewData.structure.cleaned">
+              <el-tabs v-model="previewTab" type="border-card" class="preview-tabs">
+                <!-- 原始数据 -->
+                <el-tab-pane label="原始数据" name="original">
+                  <div class="preview-content">
+                    <div class="preview-section">
+                      <h4>文件信息</h4>
+                      <p>行数：{{ previewData.structure.original.row_count }}</p>
+                      <p>列数：{{ previewData.structure.original.columns.length }}</p>
+                    </div>
+                    <div class="preview-section">
+                      <h4>列信息</h4>
+                      <ul class="column-list">
+                        <li v-for="(col, index) in previewData.structure.original.columns" :key="index">
+                          {{ col.name }}
+                        </li>
+                      </ul>
+                    </div>
+                    <div class="preview-section">
+                      <h4>前5行数据</h4>
+                      <div class="preview-table">
+                        <div class="table-header">
+                          <span v-for="(col, index) in previewData.structure.original.columns" :key="index">{{ col.name }}</span>
+                        </div>
+                        <div 
+                          v-for="(row, rowIndex) in previewData.structure.original.preview_data" 
+                          :key="rowIndex"
+                          class="table-row"
+                        >
+                          <span v-for="(col, colIndex) in previewData.structure.original.columns" :key="colIndex">
+                            {{ row[col.name] }}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </el-tab-pane>
+
+                <!-- 清洗后数据 -->
+                <el-tab-pane label="清洗后数据" name="cleaned">
+                  <div class="preview-content">
+                    <div class="preview-section">
+                      <h4>文件信息</h4>
+                      <p>行数：{{ previewData.structure.cleaned.row_count }}</p>
+                      <p>列数：{{ previewData.structure.cleaned.columns.length }}</p>
+                    </div>
+                    <div class="preview-section">
+                      <h4>列信息</h4>
+                      <ul class="column-list">
+                        <li v-for="(col, index) in previewData.structure.cleaned.columns" :key="index">
+                          {{ col.name }}
+                        </li>
+                      </ul>
+                    </div>
+                    <div class="preview-section">
+                      <h4>前5行数据</h4>
+                      <div class="preview-table">
+                        <div class="table-header">
+                          <span v-for="(col, index) in previewData.structure.cleaned.columns" :key="index">{{ col.name }}</span>
+                        </div>
+                        <div 
+                          v-for="(row, rowIndex) in previewData.structure.cleaned.preview_data" 
+                          :key="rowIndex"
+                          class="table-row"
+                        >
+                          <span v-for="(col, colIndex) in previewData.structure.cleaned.columns" :key="colIndex">
+                            {{ row[col.name] }}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </el-tab-pane>
+              </el-tabs>
+            </div>
+
+            <!-- 兼容旧格式 - 如果没有original/cleaned结构 -->
+            <div v-else class="data-preview-legacy">
+              <div class="preview-section">
+                <h4>文件信息</h4>
+                <p>行数：{{ previewData.structure.row_count }}</p>
+                <p>列数：{{ previewData.structure.columns.length }}</p>
+              </div>
+              <div class="preview-section">
+                <h4>列信息</h4>
+                <ul class="column-list">
+                  <li v-for="(col, index) in previewData.structure.columns" :key="index">
+                    {{ col.name }}
+                  </li>
+                </ul>
+              </div>
+              <div class="preview-section">
+                <h4>前5行数据</h4>
+                <div class="preview-table">
+                  <div class="table-header">
+                    <span v-for="(col, index) in previewData.structure.columns" :key="index">{{ col.name }}</span>
+                  </div>
+                  <div 
+                    v-for="(row, rowIndex) in previewData.structure.preview_data" 
+                    :key="rowIndex"
+                    class="table-row"
+                  >
+                    <span v-for="(col, colIndex) in previewData.structure.columns" :key="colIndex">
+                      {{ row[col.name] }}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -553,6 +665,37 @@ const previewFile = ref(null)
 const previewData = ref(null)
 const previewLoading = ref(false)
 const previewError = ref('')
+const previewTab = ref('cleaned') // 默认显示清洗后的数据
+
+// 获取清洗操作的描述
+const getOperationDescription = (op) => {
+  const descriptions = {
+    'handle_missing_values': '缺失值处理',
+    'handle_duplicates': '重复值移除',
+    'standardize_formats': '格式标准化',
+    'detect_outliers': '异常值检测',
+    'normalize_column_names': '列名规范化',
+    'remove_invalid_rows': '无效行清理'
+  }
+  
+  let desc = descriptions[op.operation] || op.operation
+  
+  // 添加操作详情
+  if (op.columns_dropped && op.columns_dropped.length > 0) {
+    desc += ` (删除列: ${op.columns_dropped.length}个)`
+  }
+  if (op.rows_dropped > 0) {
+    desc += ` (删除行: ${op.rows_dropped}个)`
+  }
+  if (op.duplicates_removed > 0) {
+    desc += ` (删除重复: ${op.duplicates_removed}个)`
+  }
+  if (op.values_imputed && Object.keys(op.values_imputed).length > 0) {
+    desc += ` (填充缺失值: ${Object.keys(op.values_imputed).length}列)`
+  }
+  
+  return desc
+}
 
 // 数据库连接对话框状态
 const showDatabaseConnectionDialog = ref(false)
@@ -781,21 +924,26 @@ const handleFileSelect = async (type, file) => {
 
 // 处理文件预览
 const handlePreviewFile = async (file) => {
+  console.log('开始预览文件:', file.name)
   previewFile.value = file
   showPreview.value = true
   previewLoading.value = true
   previewError.value = ''
+  previewData.value = null
   
   try {
     const previewResponse = await uploadService.previewFile(file)
+    console.log('预览响应:', previewResponse)
     
     if (previewResponse.status === 'ok') {
       previewData.value = previewResponse
+      console.log('预览数据已设置:', previewData.value)
     } else {
       previewError.value = `预览失败：${previewResponse.message}`
     }
   } catch (error) {
-    previewError.value = `预览失败：${error.message}`
+    console.error('预览异常:', error)
+    previewError.value = `预览失败：${error.message || '未知错误'}`
   } finally {
     previewLoading.value = false
   }
@@ -831,7 +979,6 @@ const handleSendWithFiles = async (text, files) => {
   }
   
   chatStore.setLoading(true)
-  startThinking()
   scrollToBottom()
 
   try {
@@ -884,6 +1031,15 @@ const handleSendWithFiles = async (text, files) => {
             uploadResponse.sql_content || null  // 传入SQL内容
           )
           sessionStore.addSession({ id: sessionId, fileName, timestamp: new Date() })
+          
+          // 添加数据清洗成功的提示消息
+          if (!isSqlFile) {
+            messages.value.push({
+              role: 'ai',
+              type: 'text',
+              content: `✅ 数据清洗成功！文件已准备好，请输入您的分析需求。`
+            })
+          }
         } else {
           showMessage(`上传失败：${uploadResponse.message}`, 'error')
           allFilesUploaded = false
@@ -902,6 +1058,8 @@ const handleSendWithFiles = async (text, files) => {
       if (sessionStore.currentSessionId) {
         // 有会话ID，调用分析API
         try {
+          chatStore.setLoading(true)
+          startThinking()
           const response = await sessionService.sendMessage(sessionStore.currentSessionId, trimmedText, currentModel.value.id)
           
           if (response.status === 'ok') {
@@ -932,7 +1090,8 @@ const handleSendWithFiles = async (text, files) => {
                 role: 'ai',
                 type: 'chart',
                 title: '分析结果图表',
-                chartOption: response.chart_option
+                chartOption: response.chart_option,
+                chartLibId: currentChartLib.value.id
               })
             }
           } else {
@@ -948,10 +1107,15 @@ const handleSendWithFiles = async (text, files) => {
             type: 'text',
             content: `错误：${messageError.message}`
           })
+        } finally {
+          chatStore.setLoading(false)
+          stopThinking()
         }
       } else {
         // 没有会话ID，调用普通聊天API
         try {
+          chatStore.setLoading(true)
+          startThinking()
           const response = await chatService.sendChatMessage(trimmedText)
           
           if (response.status === 'ok') {
@@ -974,6 +1138,9 @@ const handleSendWithFiles = async (text, files) => {
             type: 'text',
             content: `错误：${messageError.message}`
           })
+        } finally {
+          chatStore.setLoading(false)
+          stopThinking()
         }
       }
     }
@@ -1280,13 +1447,13 @@ const handleSendMessage = async (text) => {
             chartLibId: currentChartLib.value.id  // 保存当前选择的图表库
           })
         }
-    } else {
-      messages.value.push({
-        role: 'ai',
-        type: 'text',
-        content: `错误：${response.message || '处理失败'}`
-      })
-    }
+      } else {
+        messages.value.push({
+          role: 'ai',
+          type: 'text',
+          content: `错误：${response.message || '处理失败'}`
+        })
+      }
     } else {
       // 没有会话ID但不是第一次发送消息，调用普通聊天API
       const response = await chatService.sendChatMessage(trimmedText, currentModel.value.id)
@@ -1318,6 +1485,13 @@ const handleSendMessage = async (text) => {
     stopThinking()
     nextTick(() => scrollToBottom())
   }
+}
+
+// 处理停止功能
+const handleStop = () => {
+  showMessage('已停止当前操作', 'info')
+  chatStore.setLoading(false)
+  stopThinking()
 }
 
 const scrollToBottom = () => {
@@ -2628,6 +2802,112 @@ onUnmounted(() => {
   overflow-y: auto;
 }
 
+/* 数据清洗摘要样式 */
+.clean-summary {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(139, 92, 246, 0.1));
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.clean-summary h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.summary-stats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  background-color: var(--bg-primary);
+  border-radius: 8px;
+}
+
+.stat-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.stat-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.stat-value.success {
+  color: #10b981;
+}
+
+.stat-value.warning {
+  color: #f59e0b;
+}
+
+.operations-list {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color);
+}
+
+.operations-list h5 {
+  margin: 0 0 8px 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.operations-list ul {
+  margin: 0;
+  padding-left: 16px;
+  list-style-type: disc;
+}
+
+.operations-list li {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin-bottom: 4px;
+}
+
+/* 预览Tabs样式 */
+.preview-tabs {
+  margin-bottom: 16px;
+}
+
+.preview-tabs :deep(.el-tabs__header) {
+  margin-bottom: 12px;
+}
+
+.preview-tabs :deep(.el-tabs__nav-wrap::after) {
+  display: none;
+}
+
+.preview-tabs :deep(.el-tabs__item) {
+  font-size: 13px;
+  padding: 0 16px;
+  height: 36px;
+  line-height: 36px;
+}
+
+.preview-tabs :deep(.el-tabs__active-bar) {
+  background-color: var(--accent-color);
+  height: 3px;
+}
+
+.preview-tabs :deep(.el-tab-pane) {
+  padding: 0;
+}
+
 /* 响应式调整 */
 @media (max-width: 1200px) {
   .main-content.with-preview {
@@ -2636,6 +2916,10 @@ onUnmounted(() => {
   
   .preview-sidebar {
     width: 300px;
+  }
+  
+  .summary-stats {
+    grid-template-columns: 1fr;
   }
 }
 </style>

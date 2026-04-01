@@ -1,7 +1,20 @@
 import uuid
 import pandas as pd
+import numpy as np
 from typing import Dict, Optional, Any, List
 from datetime import datetime
+
+
+def replace_nan_in_dict(obj):
+    """递归替换字典中的NaN值为None"""
+    if isinstance(obj, dict):
+        return {k: replace_nan_in_dict(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [replace_nan_in_dict(item) for item in obj]
+    elif isinstance(obj, float) and (np.isnan(obj) or np.isinf(obj)):
+        return None
+    else:
+        return obj
 
 # 内存存储会话数据（键为session_id，值为会话信息）
 sessions: Dict[str, Dict[str, Any]] = {}
@@ -19,10 +32,14 @@ def create_session(dataframe: pd.DataFrame, filename: str, sql_content: Optional
             for col in dataframe.columns
         ]
     
+    # 处理预览数据，确保没有NaN值
+    preview_data = dataframe.head(5).to_dict(orient="records")
+    preview_data = replace_nan_in_dict(preview_data)
+    
     sessions[session_id] = {
         "dataframe": dataframe,
         "filename": filename,
-        "preview": dataframe.head(5).to_dict(orient="records"),
+        "preview": preview_data,
         "columns": session_columns,
         "row_count": len(dataframe),
         "created_at": datetime.now().isoformat(),
@@ -40,8 +57,12 @@ def update_session_dataframe(session_id: str, dataframe: pd.DataFrame) -> bool:
     """更新会话中的DataFrame（如清洗后）"""
     if session_id not in sessions:
         return False
+    # 处理预览数据，确保没有NaN值
+    preview_data = dataframe.head(5).to_dict(orient="records")
+    preview_data = replace_nan_in_dict(preview_data)
+    
     sessions[session_id]["dataframe"] = dataframe
-    sessions[session_id]["preview"] = dataframe.head(5).to_dict(orient="records")
+    sessions[session_id]["preview"] = preview_data
     sessions[session_id]["row_count"] = len(dataframe)
     return True
 

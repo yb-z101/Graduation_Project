@@ -45,15 +45,22 @@
             :disabled="loading"
           />
           
-          <el-button 
-            class="send-btn"
-            type="primary" 
-            :icon="Position" 
-            :loading="loading"
-            :disabled="(loading)"
-            @click="handleSendMessage"
-            circle
-          />
+          <div class="button-group">
+            <div 
+              v-if="loading"
+              class="custom-stop-btn"
+              @click="handleStop"
+            >
+              <div class="stop-icon"></div>
+            </div>
+            <div 
+              v-else
+              class="custom-send-btn"
+              @click="handleSendMessage"
+            >
+              <div class="send-icon">↑</div>
+            </div>
+          </div>
         </div>
 
         <!-- 功能按钮栏（内置到底部） -->
@@ -135,7 +142,7 @@ import { ref } from 'vue'
 import { 
   Paperclip, Position, 
   DataAnalysis, Document, Connection, Grid, Close, Database,
-  TrendCharts, ArrowDown, Check
+  TrendCharts, ArrowDown, Check, VideoPause
 } from '@element-plus/icons-vue'
 
 const props = defineProps({
@@ -160,7 +167,8 @@ const emit = defineEmits([
   'preview-file',
   'send-with-files',
   'database-connect',
-  'select-chart-lib'
+  'select-chart-lib',
+  'stop'
 ])
 
 const userInput = ref('')
@@ -184,6 +192,11 @@ defineExpose({
   clearInput,
   pendingFiles
 })
+
+// 处理停止
+const handleStop = () => {
+  emit('stop')
+}
 
 // 处理发送消息
 const handleSendMessage = () => {
@@ -388,16 +401,49 @@ onUnmounted(() => {
   color: var(--text-muted);
 }
 
-.send-btn {
-  background-color: var(--accent-color);
-  border: none;
-  width: 40px;
-  height: 40px;
+.button-group {
+  display: flex;
+  gap: 8px;
   flex-shrink: 0;
 }
 
-.send-btn:hover {
-  background-color: var(--accent-hover);
+.custom-stop-btn,
+.custom-send-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background-color: #1677ff;
+  border: none;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.custom-stop-btn:hover,
+.custom-send-btn:hover {
+  background-color: #4096ff;
+}
+
+.custom-stop-btn:active,
+.custom-send-btn:active {
+  transform: scale(0.95);
+}
+
+.stop-icon {
+  width: 16px;
+  height: 16px;
+  background-color: white;
+  border-radius: 2px;
+}
+
+.send-icon {
+  font-size: 20px;
+  font-weight: bold;
+  line-height: 1;
 }
 
 /* 功能按钮栏（内置到底部） */
