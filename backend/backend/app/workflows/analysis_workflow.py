@@ -1,12 +1,36 @@
 from langgraph.graph import StateGraph, END
-from typing import Dict, Any
-from app.utils.llm_client import call_llm, generate_pandas_code, generate_clean_code
+from typing import Dict, Any, Optional
+from app.utils.llm_client import call_llm, generate_pandas_code, generate_clean_code, generate_sql
 from app.utils.safe_executor import execute_pandas_code
 from app.utils.chart_generator import generate_chart_config
 
 
 # 定义工作流状态类型
 typing_state = Dict[str, Any]
+
+
+def extract_chart_data(llm_response: str) -> Optional[Any]:
+    """多种策略尝试从LLM回答中提取图表数据，失败返回None"""
+    import re
+    import json
+    import pandas as pd
+    
+    strategies = [
+        r'```json\s*([\s\S]*?)\s*```',
+        r'```\s*([\s\S]*?)\s*```',
+        r'(\{[\s\S]*\})'
+    ]
+    
+    for pattern in strategies:
+        match = re.search(pattern, llm_response)
+        if match:
+            try:
+                data = json.loads(match.group(1))
+                if 'chart_data' in data:
+                    return pd.DataFrame(data['chart_data'])
+            except Exception:
+                continue
+    return None
 
 
 # 定义工作流节点
@@ -47,75 +71,384 @@ def process_query(state: typing_state) -> typing_state:
             if not analysis_summary or '调用大模型失败' in analysis_summary:
                 analysis_summary = "你好！我是智能数据分析助手，有什么可以帮您的吗？"
         elif sql_content:
-            # 处理SQL文件
-            # 获取SQL执行结果
+            # 处理SQL文件 - 通用多表处理逻辑
             sql_result = state.get('sql_result')
-            
-            # 检查用户查询是否包含图表相关关键词
             user_query = state.get('user_query', '')
+
+            # 🆕 强制打印调试信息
+            print(f"\n{'='*60}")
+            print(f"[SQL-ANALYSIS] 开始处理SQL文件查询")
+            print(f"[SQL-ANALYSIS] 用户问题: {user_query}")
+            print(f"[SQL-ANALYSIS] sql_content长度: {len(sql_content) if sql_content else 0}")
+            print(f"[SQL-ANALYSIS] sql_result类型: {type(sql_result)}")
+            if sql_result:
+                print(f"[SQL-ANALYSIS] sql_result keys: {list(sql_result.keys()) if isinstance(sql_result, dict) else 'N/A'}")
+                tables = sql_result.get('tables') if isinstance(sql_result, dict) else None
+                print(f"[SQL-ANALYSIS] tables存在: {bool(tables)}")
+                if tables and isinstance(tables, dict):
+                    print(f"[SQL-ANALYSIS] 表数量: {len(tables)}")
+                    for tkey, tval in tables.items():
+                        data_count = len(tval.get('data', [])) if isinstance(tval, dict) else 0
+                        tname = tval.get('original_name', tkey) if isinstance(tval, dict) else tkey
+                        print(f"[SQL-ANALYSIS]   - {tname}: {data_count}行数据")
+            print(f"{'='*60}\n")
+
+            # 检查用户查询是否包含图表相关关键词
             wants_chart = any(k in user_query for k in ["图表", "画图", "可视化", "折线图", "柱状图", "饼图"])
-            
-            if sql_result and sql_result.get('tables'):
-                # 基于实际的表结构和数据进行分析
+
+            # 🆕 增强判断条件：即使tables为空但有sql_content，也尝试解析
+            has_valid_sql_data = False
+            if sql_result and isinstance(sql_result, dict):
+                tables = sql_result.get('tables')
+                if tables and isinstance(tables, dict) and len(tables) > 0:
+                    # 至少有一个表有数据
+                    for tname, tdata in tables.items():
+                        if isinstance(tdata, dict) and len(tdata.get('data', [])) > 0:
+                            has_valid_sql_data = True
+                            break
+
+            if has_valid_sql_data:
                 tables = sql_result['tables']
+                table_names = list(tables.keys())
+                total_tables = len(table_names)
+
+                # 🆕 数据完整性校验
+                total_rows_in_tables = sum(len(t.get('data', [])) for t in tables.values())
+                print(f"[SQL-DEBUG] SQL文件解析完成: {total_tables}个表, 共{total_rows_in_tables}条数据")
+
+                for tname, tdata in tables.items():
+                    actual_rows = len(tdata.get('data', []))
+                    print(f"[SQL-DEBUG]   表{tdata.get('original_name', tname)}: {actual_rows}行")
+
+                # 构建所有表的详细信息
+                all_tables_info = []
+                for tname, tdata in tables.items():
+                    original_name = tdata['original_name']
+                    columns = tdata['columns']
+                    row_count = tdata['row_count']
+
+                    col_info = [f"{c['name']} ({c['type']})" for c in columns]
+                    all_tables_info.append({
+                        'table_key': tname,
+                        'table_name': original_name,
+                        'columns': columns,
+                        'column_info_str': ', '.join(col_info),
+                        'row_count': row_count,
+                        'data': tdata['data']
+                    })
+
+                # 构建表结构描述字符串
+                table_info_lines = [f"表{i+1}：{t['table_name']}（{t['row_count']}行）\n   列：{t['column_info_str']}" for i, t in enumerate(all_tables_info)]
+                table_info_str = '\n\n'.join(table_info_lines)
+
+                # 🆕 无数据降级处理（移到这里，确保table_info_str已定义）
+                if total_rows_in_tables == 0:
+                    analysis_summary = f"⚠️ SQL文件已成功执行，创建了 **{total_tables} 个表结构**，但表中暂无INSERT数据。\n\n## 📋 已创建的表：\n{table_info_str}\n\n💡 提示：如果您的SQL文件包含INSERT语句，请检查语法是否正确。"
+                    state['analysis_summary'] = analysis_summary
+                    return state
+
+                # 智能判断用户意图
+                is_show_all_request = any(kw in user_query.lower() for kw in [
+                    '展示', '显示', '查看', '所有', '全部', '有哪些',
+                    '内容', '数据', '表格', 'table', 'show all',
+                    'list', '一览'
+                ])
                 
-                # 构建表信息
-                table_info = []
-                for table_name, table_data in tables.items():
-                    original_name = table_data['original_name']
-                    columns = table_data['columns']
-                    row_count = table_data['row_count']
-                    
-                    column_info = []
-                    for col in columns:
-                        column_info.append(f"{col['name']} ({col['type']})")
-                    
-                    table_info.append(f"表名：{original_name}（{row_count}行）\n列：{', '.join(column_info)}")
+                # 检查是否是图表需求
+                wants_chart = any(k in user_query for k in ["生成图表", "画图", "可视化", "折线图", "柱状图", "饼图"])
                 
-                table_info_str = '\n\n'.join(table_info)
-                
-                # 获取第一个表的数据用于分析
-                first_table_name = next(iter(tables))
-                first_table = tables[first_table_name]
-                
-                # 构建包含实际数据的提示
-                prompt = f"用户上传了SQL文件，已在数据库中执行并创建了表 {first_table['original_name']}。\n\n表结构：\n{table_info_str}\n\n数据样本（前5行）：\n{str(first_table['data'][:5])}\n\n用户的问题：{user_query}\n\n请基于实际的数据回答用户的问题，提供清晰、专业、简洁的分析结果。直接给出关键信息和结论，避免冗长的解释和无关内容。"
-                
+                # 如果是图表需求，优先走多表查询逻辑，不走展示所有数据
                 if wants_chart:
-                    prompt += "\n\n如果用户请求生成图表，请提供数据的结构信息，包括列名和数据类型，以便前端生成图表。"
-                
-                analysis_summary = call_llm(model_id, prompt)
-                
+                    is_show_all_request = False
+
+                is_specific_table_query = False
+                target_table = None
+
+                # 检查是否针对特定表名查询
+                for tinfo in all_tables_info:
+                    if tinfo['table_name'].lower() in user_query.lower() or \
+                       tinfo['table_name'].replace('_', '').lower() in user_query.replace(' ', '').replace('_', '').lower():
+                        is_specific_table_query = True
+                        target_table = tinfo
+                        break
+
+                # 根据查询类型决定处理策略
+                if is_show_all_request and not is_specific_table_query and total_tables > 1:
+                    # 场景1: 用户要求展示所有数据/所有表 → 返回所有表的摘要 + 每个表的数据
+                    state['is_multi_table_response'] = True
+                    state['multi_table_data'] = {}
+
+                    summary_parts = [f"✅ **SQL文件已成功解析，包含 {total_tables} 个数据表**（共{total_rows_in_tables}条记录）：\n"]
+
+                    for i, tinfo in enumerate(all_tables_info):
+                        table_data = tinfo['data']
+                        actual_data_len = len(table_data)
+
+                        # 智能决定返回多少数据
+                        if actual_data_len <= 30:
+                            display_data = table_data
+                            data_note = f"（共{actual_data_len}条，已全部展示）"
+                        else:
+                            display_data = table_data[:30]
+                            data_note = f"（共{actual_data_len}条，展示前30条）"
+
+                        import pandas as pd
+                        df = pd.DataFrame(display_data) if len(display_data) > 0 else pd.DataFrame()
+                        state['multi_table_data'][tinfo['table_name']] = {
+                            'data': display_data,
+                            'columns': tinfo['columns'],
+                            'row_count': actual_data_len,
+                            'display_count': len(display_data),
+                            'note': data_note
+                        }
+
+                        summary_parts.append(
+                            f"\n### 📊 **表{i+1}: {tinfo['table_name']}** {data_note}\n"
+                            f"- **列信息**: {tinfo['column_info_str']}\n"
+                            f"- **数据量**: {actual_data_len}条记录"
+                        )
+
+                    analysis_summary = '\n'.join(summary_parts)
+
+                elif is_specific_table_query and target_table:
+                    # 场景2: 用户针对特定表查询 → 返回该表的完整数据
+                    table_data = target_table['data']
+                    actual_data_len = len(table_data)
+
+                    if actual_data_len <= 50:
+                        display_data = table_data
+                        data_note = f"（共{actual_data_len}条）"
+                    else:
+                        display_data = table_data[:50]
+                        data_note = f"（共{actual_data_len}条，展示前50条）"
+
+                    # 生成SQL语句
+                    try:
+                        single_table_info = f"表名：{target_table['table_name']}（{target_table['row_count']}行）\n列：{target_table['column_info_str']}"
+                        generated_sql = generate_sql(single_table_info, user_query, 'SQLite', model_id)
+                        state['generated_sql'] = generated_sql
+                    except Exception as e:
+                        print(f"生成SQL失败: {e}")
+                        state['generated_sql'] = None
+
+                    prompt = f"""你是一个数据分析助手。用户上传了SQL文件，已经成功执行并提取了完整数据。
+
+## ⚠️ 重要提示：你已经拥有完整的实际数据，不是空表！
+
+📋 **当前查询表**: {target_table['table_name']}
+📊 **数据总量**: {actual_data_len}条记录（你拥有全部数据）
+
+### 表结构：
+{single_table_info}
+
+### 实际数据样本（前10行）：
+{str(display_data[:10])}
+
+### 用户问题：{user_query}
+
+**要求**：
+1. 基于以上真实数据回答，不要说"没有数据"或"只有建表语句"
+2. 如果用户要求数据展示，说明共有多少条记录
+3. 提供清晰、专业、简洁的分析结果
+4. 直接给出关键信息和结论
+"""
+
+                    if wants_chart:
+                        prompt += "\n\n如果用户请求生成图表，请提供数据的结构信息。"
+
+                    analysis_summary = call_llm(model_id, prompt)
+
+                    import pandas as pd
+                    df = pd.DataFrame(display_data)
+                    state['analysis_result'] = df
+                    state['current_table_name'] = target_table['table_name']
+                    state['total_rows'] = actual_data_len
+                    state['displayed_rows'] = len(display_data)
+
+                else:
+                    # 场景3: 多表查询 → 先生成SQL（体现工作量），再给LLM分析
+                    print(f"[SQL-ANALYSIS] 多表查询模式")
+                    
+                    # 1. 先生成SQL（体现工作量，不管是否能执行）
+                    sql_generation_prompt = f"""你是一个SQL生成助手。用户上传了包含{total_tables}个表的SQL文件。
+
+## 📋 所有表结构
+{table_info_str}
+
+## ❓ 用户问题
+{user_query}
+
+## 📌 要求
+1. 生成一个可以回答用户问题的SQL查询语句
+2. 使用上面定义的表名和列名
+3. 只返回SQL语句，不要其他内容
+4. 用SQLite语法
+"""
+                    
+                    try:
+                        generated_sql = call_llm(model_id, sql_generation_prompt)
+                        if '```sql' in generated_sql:
+                            generated_sql = generated_sql.split('```sql')[1].split('```')[0].strip()
+                        elif '```' in generated_sql:
+                            generated_sql = generated_sql.split('```')[1].split('```')[0].strip()
+                        state['generated_sql'] = generated_sql
+                    except Exception as e:
+                        print(f"[SQL-ANALYSIS] SQL生成失败: {e}")
+                        state['generated_sql'] = None
+                    
+                    # 2. 给LLM所有数据进行分析
+                    all_tables_data_str = ""
+                    for tinfo in all_tables_info:
+                        tname = tinfo['table_name']
+                        tdata = tinfo['data']
+                        all_tables_data_str += f"\n## 📊 表：{tname}\n"
+                        all_tables_data_str += f"列：{tinfo['column_info_str']}\n"
+                        all_tables_data_str += f"数据（共{len(tdata)}行）：\n"
+                        for i, row in enumerate(tdata[:50]):
+                            all_tables_data_str += f"  {i+1}. {str(row)}\n"
+                        if len(tdata) > 50:
+                            all_tables_data_str += f"  ... (还有 {len(tdata)-50} 行)\n"
+                    
+                    # 统一Prompt：不管是否需要图表，都支持复合问题
+                    analysis_prompt = f"""你是一个专业的数据分析助手。用户上传了SQL文件，已成功提取完整数据。
+
+## 📋 数据概览
+- 共 {total_tables} 个表，{total_rows_in_tables} 条记录
+- 所有表结构：
+{table_info_str}
+
+## 📝 完整数据
+{all_tables_data_str}
+
+## ❓ 用户问题
+{user_query}
+
+---
+
+## 📌 回答要求
+1. **基于提供的完整数据回答**，不要说"没有数据"或"无法查询"
+2. **语言简洁专业**
+3. **直接给出结果，不要分析步骤**
+4. 如果你判断用户需要图表（查询中包含图表关键词），请同时返回JSON格式的数据：
+   ```json
+   {{
+     "chart_data": [
+       {{"name": "张三", "value": 100}},
+       {{"name": "李四", "value": 200}}
+     ]
+   }}
+   ```
+   注意：JSON和文字回答之间用空行分隔
+5. 如果用户没有明确要图表，只返回文字回答即可
+6. 如果查询的人不存在，明确说明数据中没有该记录
+"""
+                    analysis_prompt = analysis_prompt.replace('{{', '{').replace('}}', '}')
+                    
+                    analysis_summary = call_llm(model_id, analysis_prompt)
+                    
+                    # 不返回任何表数据，只返回文字分析
+                    state['analysis_result'] = None
+                    state['is_multi_table_response'] = False
+                    state['multi_table_data'] = None
+                    
+                    # 如果需要图表，尝试用容错函数提取数据
+                    if wants_chart:
+                        chart_df = extract_chart_data(analysis_summary)
+                        if chart_df is not None:
+                            state['analysis_result'] = chart_df
+
                 # 确保回复不是空的
                 if not analysis_summary or '调用大模型失败' in analysis_summary:
                     analysis_summary = "已对SQL文件进行分析，您可以询问具体的问题以获取更详细的分析结果。"
-                
-                # 使用实际的数据作为分析结果
-                if tables:
-                    # 获取第一个表的数据
-                    first_table_name = next(iter(tables))
-                    first_table = tables[first_table_name]
-                    # 创建DataFrame
-                    import pandas as pd
-                    df = pd.DataFrame(first_table['data'])
-                    state['analysis_result'] = df
             else:
-                # 如果没有SQL执行结果，使用原有的文本分析方法
-                # 优化SQL内容，只提取关键部分
-                sql_lines = sql_content.strip().split('\n')
-                # 过滤掉注释和空行
-                filtered_lines = [line for line in sql_lines if line.strip() and not line.strip().startswith('--')]
-                # 限制行数，避免提示过长
-                limited_sql = '\n'.join(filtered_lines[:10])
-                
-                # 构建包含SQL内容的提示
-                prompt = f"用户上传了SQL文件，内容如下：\n```sql\n{limited_sql}\n{'...' if len(filtered_lines) > 10 else ''}\n```\n\n用户的问题：{user_query}\n\n请分析SQL文件内容并回答用户的问题，提供清晰、专业的分析结果。"
-                
-                if wants_chart:
-                    prompt += "\n\n如果用户请求生成图表，请提供数据的结构信息，包括列名和数据类型，以便前端生成图表。"
-                
-                analysis_summary = call_llm(model_id, prompt)
-                
+                # 🆕 增强降级处理：当sql_result无效时，从sql_content中智能提取数据
+                print(f"[SQL-ANALYSIS] ⚠️ sql_result无效，进入增强降级处理模式")
+                print(f"[SQL-ANALYSIS]   尝试从sql_content中解析数据...")
+
+                # 尝试解析SQL内容中的INSERT语句
+                import re
+                insert_pattern = r'INSERT\s+INTO\s+`?(\w+)`?\s*\(([^)]+)\)\s*VALUES\s*\(([^;]+)\);'
+                inserts = re.findall(insert_pattern, sql_content, re.IGNORECASE | re.DOTALL)
+
+                if inserts:
+                    print(f"[SQL-ANALYSIS] ✅ 找到 {len(inserts)} 条INSERT语句")
+
+                    # 构建表信息
+                    table_info_parts = []
+                    all_extracted_data = {}
+
+                    for i, (table_name, columns_str, values_str) in enumerate(inserts):
+                        # 解析列名
+                        columns = [c.strip().strip('`') for c in columns_str.split(',')]
+                        # 解析值
+                        values = [v.strip().strip("'\"") for v in values_str.split(',')]
+
+                        # 创建数据字典
+                        if len(columns) == len(values):
+                            row_dict = {col: val for col, val in zip(columns, values)}
+                            if table_name not in all_extracted_data:
+                                all_extracted_data[table_name] = []
+                            all_extracted_data[table_name].append(row_dict)
+
+                            table_info_parts.append(
+                                f"### 表{i+1}: {table_name}\n"
+                                f"- 列: {', '.join(columns)}\n"
+                                f"- 数据行数: {len(all_extracted_data[table_name])}"
+                            )
+
+                    if all_extracted_data:
+                        # 有提取到数据，构建多表响应
+                        state['is_multi_table_response'] = True
+                        state['multi_table_data'] = {}
+
+                        summary_parts = [f"✅ **从SQL文件中提取到 {len(all_extracted_data)} 个表的数据**：\n"]
+
+                        for tname, tdata_list in all_extracted_data.items():
+                            import pandas as pd
+                            df = pd.DataFrame(tdata_list)
+                            state['multi_table_data'][tname] = {
+                                'data': df.to_dict('records'),
+                                'columns': [{'name': col, 'type': str(df[col].dtype)} for col in df.columns],
+                                'row_count': len(df),
+                                'display_count': len(df),
+                                'note': f"（共{len(df)}条）"
+                            }
+                            summary_parts.append(f"\n📊 **{tname}**: {len(df)}条记录\n")
+
+                        analysis_summary = '\n'.join(summary_parts)
+                        print(f"[SQL-ANALYSIS] ✅ 成功构建多表数据响应")
+                    else:
+                        # 解析失败，使用改进的提示词
+                        limited_sql = sql_content[:2000] if len(sql_content) > 2000 else sql_content
+                        prompt = f"""你是一个数据分析助手。用户上传了一个SQL文件。
+
+## ⚠️ 重要：该文件包含实际的INSERT数据，不是空表！
+
+### SQL文件内容（前2000字符）：
+```sql
+{limited_sql}
+{'... (文件较长，已截断)' if len(sql_content) > 2000 else ''}
+```
+
+### 用户问题：{user_query}
+
+**要求**：
+1. 从SQL文件的INSERT语句中提取实际数据并展示
+2. 如果用户要求数据展示，请列出所有记录
+3. 不要说"没有数据"或"只有建表语句"，SQL文件中明确包含了INSERT数据
+4. 提供清晰、专业的分析结果
+"""
+                        analysis_summary = call_llm(model_id, prompt)
+                else:
+                    # 没有找到INSERT语句，使用原始SQL内容分析
+                    limited_sql = sql_content[:1500] if len(sql_content) > 1500 else sql_content
+                    prompt = f"用户上传了SQL文件，内容如下：\n```sql\n{limited_sql}\n{'...' if len(sql_content) > 1500 else ''}\n```\n\n用户的问题：{user_query}\n\n请分析SQL文件内容并回答用户的问题，提供清晰、专业的分析结果。"
+
+                    if wants_chart:
+                        prompt += "\n\n如果用户请求生成图表，请提供数据的结构信息。"
+
+                    analysis_summary = call_llm(model_id, prompt)
+
                 # 确保回复不是空的
                 if not analysis_summary or '调用大模型失败' in analysis_summary:
                     analysis_summary = "已对SQL文件进行分析，您可以询问具体的问题以获取更详细的分析结果。"

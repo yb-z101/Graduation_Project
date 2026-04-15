@@ -17,11 +17,33 @@
     <!-- 右侧主区域 -->
     <main class="main-content" :class="{ 'with-preview': showPreview, 'with-database': showDatabaseSidebar }">
       <!-- 顶部栏 -->
-      <TopBar 
+      <TopBar
         :model-list="modelList"
         :current-model="currentModel"
         @select-model="selectModel"
       />
+
+      <!-- 🆕 工具栏（导出等功能） -->
+      <div v-if="sessionStore.currentSessionId && messages.length > 0" class="chat-toolbar">
+        <div class="toolbar-left">
+          <span class="session-info">
+            <el-icon><Document /></el-icon>
+            {{ currentFileName || '当前会话' }}
+          </span>
+        </div>
+        <div class="toolbar-right">
+          <el-button
+            type="primary"
+            size="small"
+            :loading="exportingPDF"
+            @click="handleExportPDF"
+            class="export-btn"
+          >
+            <el-icon><Download /></el-icon>
+            导出PDF报告
+          </el-button>
+        </div>
+      </div>
 
       <!-- 聊天内容区 -->
       <div class="chat-scroll-area" ref="chatWindowRef">
@@ -407,7 +429,7 @@
 
 <script setup>
 import { ref, nextTick, computed, onMounted, onUnmounted, watch } from 'vue'
-import { DataAnalysis, Close, Document, ArrowRight } from '@element-plus/icons-vue'
+import { DataAnalysis, Close, Document, ArrowRight, Download } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
 import DataTable from '../components/DataTable.vue'
@@ -707,6 +729,20 @@ const databaseTables = ref([])
 // 保存的数据库连接
 const savedConnections = ref([])
 
+// 🆕 PDF导出相关
+const exportingPDF = ref(false)
+const currentFileName = computed(() => {
+  // 从消息中提取文件名
+  const uploadMsg = messages.value.find(m =>
+    m.role === 'ai' && m.content?.includes('已上传')
+  )
+  if (uploadMsg) {
+    const match = uploadMsg.content.match(/《(.+?)》/)
+    return match ? match[1] : null
+  }
+  return sessionStore.sessions.find(s => s.id === sessionStore.currentSessionId)?.filename || null
+})
+
 // 单个提示框管理
 let messageTimer = null
 const showMessage = (message, type = 'info') => {
@@ -833,6 +869,51 @@ const handleClearAllSessions = async () => {
     }
   } catch (e) {
     showMessage('清空失败', 'error')
+  }
+}
+
+// 🆕 导出PDF报告
+const handleExportPDF = async () => {
+  const sessionId = sessionStore.currentSessionId
+  if (!sessionId) {
+    showMessage('没有可导出的会话', 'warning')
+    return
+  }
+
+  exportingPDF.value = true
+
+  try {
+    // 调用后端API生成PDF
+    const response = await fetch(`/api/sessions/${sessionId}/export-pdf`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/pdf'
+      }
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json()
+      throw new Error(errorData.detail || '导出失败')
+    }
+
+    // 获取PDF blob并下载
+    const blob = await response.blob()
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `数据分析报告_${currentFileName.value || sessionId.substring(0, 8)}_${new Date().toISOString().slice(0, 10)}.pdf`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+
+    showMessage('✅ PDF报告已成功导出！', 'success')
+
+  } catch (error) {
+    console.error('PDF导出失败:', error)
+    showMessage(`❌ 导出失败: ${error.message}`, 'error')
+  } finally {
+    exportingPDF.value = false
   }
 }
 
@@ -1063,6 +1144,15 @@ const handleSendWithFiles = async (text, files) => {
           const response = await sessionService.sendMessage(sessionStore.currentSessionId, trimmedText, currentModel.value.id)
           
           if (response.status === 'ok') {
+            // 0) 如果有生成的SQL语句，先展示SQL
+            if (response.generated_sql && response.generated_sql.trim()) {
+              messages.value.push({
+                role: 'ai',
+                type: 'text',
+                content: `生成的SQL语句：\n\`\`\`sql\n${response.generated_sql}\n\`\`\``
+              })
+            }
+
             // 1) 先展示文本总结（优先 summary，其次 error）
             messages.value.push({
               role: 'ai',
@@ -1070,21 +1160,43 @@ const handleSendWithFiles = async (text, files) => {
               content: response.analysis_summary || response.error || '分析完成'
             })
 
-            // 2) 有结果就展示表格
-            if (response.result) {
+            // 2) 多表数据展示（当用户请求查看所有数据时）
+            if (response.is_multi_table_response && response.multi_table_data) {
+              Object.keys(response.multi_table_data).forEach(tableName => {
+                const tableInfo = response.multi_table_data[tableName]
+                if (tableInfo.data && tableInfo.data.length > 0 && tableInfo.columns) {
+                  messages.value.push({
+                    role: 'ai',
+                    type: 'table',
+                    title: `${tableName} ${tableInfo.note || ''}`,
+                    data: tableInfo.data,
+                    columns: tableInfo.columns.map(col => col.name)
+                  })
+                }
+              })
+            }
+            // 3) 单表数据展示
+            else if (response.result) {
               const { records, columns } = dfDictToRecords(response.result)
               if (records.length && columns.length) {
+                let tableTitle = '分析结果表格'
+                if (response.current_table_name) {
+                  tableTitle = `${response.current_table_name} 数据表`
+                  if (response.total_rows && response.displayed_rows) {
+                    tableTitle += `（显示${response.displayed_rows}/${response.total_rows}条）`
+                  }
+                }
                 messages.value.push({
                   role: 'ai',
                   type: 'table',
-                  title: '分析结果表格',
+                  title: tableTitle,
                   data: records,
                   columns
                 })
               }
             }
 
-            // 3) 有图表配置就展示图表
+            // 4) 有图表配置就展示图表
             if (response.chart_option) {
               messages.value.push({
                 role: 'ai',
@@ -1403,19 +1515,59 @@ const handleSendMessage = async (text) => {
           content: `生成SQL失败：${chatToSqlResponse.message}`
         });
       }
-    } else if (!sessionStore.currentSessionId && messages.value.length === 1) {
-      // 第一次发送消息且没有上传文件，提示用户上传文件
-      const aiMessage = {
+    } else if (!sessionStore.currentSessionId) {
+      // 🆕 没有会话ID（未上传文件），直接返回友好提示，不调用API
+      const friendlyResponses = [
+        '您好！我是数据分析助手 🤖 请先上传数据文件（CSV/SQL/Excel）或连接数据库，我就可以帮您分析数据啦！',
+        '嗨！我准备好帮您分析数据了 📊 请上传文件开始吧！支持 CSV、SQL、Excel 格式哦~',
+        '你好呀！👋 我是您的智能数据分析助手。请上传数据文件，我会帮您进行深度分析和可视化展示！',
+        '您好！💡 提示：您可以点击下方的"传附件"按钮上传数据文件，或者连接数据库开始分析。',
+        '嗨嗨！🎯 我在这里等您上传数据呢！支持 CSV、SQL、Excel 等格式的文件~'
+      ]
+
+      // 根据消息内容智能选择回复
+      let responseText = friendlyResponses[Math.floor(Math.random() * friendlyResponses.length)]
+
+      // 如果用户问的是关于系统的问题，给出更具体的回答
+      const lowerMsg = trimmedText.toLowerCase()
+      if (lowerMsg.includes('功能') || lowerMsg.includes('能做什么') || lowerMsg.includes('帮助')) {
+        responseText = '🔧 **我的主要功能**：\n\n' +
+          '1. **📊 数据分析** - 上传CSV/Excel文件，自动清洗并分析\n' +
+          '2. **🗄️ SQL查询** - 上传SQL文件，执行建表和查询\n' +
+          '3. **📈 数据可视化** - 生成图表（柱状图/折线图/饼图）\n' +
+          '4. **📝 报告导出** - 将分析结果导出为PDF报告\n' +
+          '5. **💬 自然语言查询** - 用对话方式询问数据问题\n\n' +
+          '请上传文件开始体验吧！'
+      } else if (lowerMsg.includes('支持') || lowerMsg.includes('格式') || lowerMsg.includes('类型')) {
+        responseText = '📁 **支持的文件格式**：\n\n' +
+          '- **CSV文件** (.csv) - 逗号分隔的数据文件\n' +
+          '- **Excel文件** (.xlsx, .xls) - 电子表格\n' +
+          '- **SQL文件** (.sql) - 数据库脚本（含建表和数据）\n\n' +
+          '点击下方"传附件"按钮即可上传~'
+      }
+
+      // 延迟一下模拟思考效果
+      await new Promise(resolve => setTimeout(resolve, 500))
+
+      messages.value.push({
         role: 'ai',
         type: 'text',
-        content: '本系统旨在进行智能数据分析，请您先上传文件或连接数据库。'
-      }
-      messages.value.push(aiMessage)
+        content: responseText
+      })
     } else if (sessionStore.currentSessionId) {
       // 有会话ID，调用分析API
       const response = await sessionService.sendMessage(sessionStore.currentSessionId, trimmedText, currentModel.value.id)
       
       if (response.status === 'ok') {
+        // 0) 如果有生成的SQL语句，先展示SQL
+        if (response.generated_sql && response.generated_sql.trim()) {
+          messages.value.push({
+            role: 'ai',
+            type: 'text',
+            content: `生成的SQL语句：\n\`\`\`sql\n${response.generated_sql}\n\`\`\``
+          })
+        }
+
         // 1) 先展示文本总结（优先 summary，其次 error）
         messages.value.push({
           role: 'ai',
@@ -1423,21 +1575,43 @@ const handleSendMessage = async (text) => {
           content: response.analysis_summary || response.error || '分析完成'
         })
 
-        // 2) 有结果就展示表格
-        if (response.result) {
+        // 2) 多表数据展示（当用户请求查看所有数据时）
+        if (response.is_multi_table_response && response.multi_table_data) {
+          Object.keys(response.multi_table_data).forEach(tableName => {
+            const tableInfo = response.multi_table_data[tableName]
+            if (tableInfo.data && tableInfo.data.length > 0 && tableInfo.columns) {
+              messages.value.push({
+                role: 'ai',
+                type: 'table',
+                title: `${tableName} ${tableInfo.note || ''}`,
+                data: tableInfo.data,
+                columns: tableInfo.columns.map(col => col.name)
+              })
+            }
+          })
+        }
+        // 3) 单表数据展示
+        else if (response.result) {
           const { records, columns } = dfDictToRecords(response.result)
           if (records.length && columns.length) {
+            let tableTitle = '分析结果表格'
+            if (response.current_table_name) {
+              tableTitle = `${response.current_table_name} 数据表`
+              if (response.total_rows && response.displayed_rows) {
+                tableTitle += `（显示${response.displayed_rows}/${response.total_rows}条）`
+              }
+            }
             messages.value.push({
               role: 'ai',
               type: 'table',
-              title: '分析结果表格',
+              title: tableTitle,
               data: records,
               columns
             })
           }
         }
 
-        // 3) 有图表配置就展示图表
+        // 4) 有图表配置就展示图表
         if (response.chart_option) {
           messages.value.push({
             role: 'ai',
@@ -1447,24 +1621,6 @@ const handleSendMessage = async (text) => {
             chartLibId: currentChartLib.value.id  // 保存当前选择的图表库
           })
         }
-      } else {
-        messages.value.push({
-          role: 'ai',
-          type: 'text',
-          content: `错误：${response.message || '处理失败'}`
-        })
-      }
-    } else {
-      // 没有会话ID但不是第一次发送消息，调用普通聊天API
-      const response = await chatService.sendChatMessage(trimmedText, currentModel.value.id)
-      
-      if (response.status === 'ok') {
-        const aiMessage = {
-          role: 'ai',
-          type: 'text',
-          content: response.response
-        }
-        messages.value.push(aiMessage)
       } else {
         messages.value.push({
           role: 'ai',
@@ -1717,6 +1873,63 @@ onUnmounted(() => {
   --card-border: #2a2a2a;
   --gradient-primary: linear-gradient(135deg, #6366f1, #8b5cf6);
   --gradient-secondary: linear-gradient(135deg, #4f46e5, #7c3aed);
+}
+
+/* 🆕 工具栏样式 */
+.chat-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 24px;
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  backdrop-filter: blur(10px);
+}
+
+.toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.session-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.session-info .el-icon {
+  color: var(--accent-color);
+  font-size: 16px;
+}
+
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.export-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+}
+
+.export-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.4);
+}
+
+.export-btn .el-icon {
+  font-size: 14px;
 }
 
 .theme-light {

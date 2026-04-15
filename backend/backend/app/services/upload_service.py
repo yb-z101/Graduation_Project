@@ -47,118 +47,187 @@ def parse_sql_from_bytes(content: bytes, filename: str) -> str:
 
 
 def execute_sql_file(content: str, filename: str) -> Dict[str, Any]:
-    """执行 SQL 文件，在 TempSQL_db 中创建临时表并返回表结构和数据"""
-    # 创建临时数据库连接
-    # 使用用户提供的正确凭据
-    db_url = "mysql+pymysql://root:123456@localhost:3306/tempsql_db?charset=utf8mb4"
-    engine = sa.create_engine(
-        db_url,
-        pool_pre_ping=True,
-        connect_args={
-            'connect_timeout': 10,
-            'read_timeout': 10,
-            'write_timeout': 10
-        }
-    )
+    """执行 SQL 文件，使用 SQLite 内存数据库解析并返回表结构和数据"""
+    import sqlite3
     
-    # 生成唯一的前缀，避免表名冲突
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    file_prefix = re.sub(r'[^a-zA-Z0-9]', '_', os.path.splitext(filename)[0])
-    table_prefix = f"temp_{file_prefix}_{timestamp}_"
+    print(f"\n{'='*80}")
+    print(f"[SQL-EXEC] 开始处理SQL文件: {filename}")
+    print(f"{'='*80}\n")
     
-    # 解析 SQL 语句
-    statements = re.split(r';\s*$', content, flags=re.MULTILINE)
-    statements = [stmt.strip() for stmt in statements if stmt.strip()]
-    
-    # 存储创建的表名
-    created_tables = []
-    table_structures = {}
+    # 创建内存 SQLite 数据库
+    conn = sqlite3.connect(':memory:')
+    cursor = conn.cursor()
     
     try:
-        with engine.connect() as conn:
-            # 开始事务
-            trans = conn.begin()
+        # 第一步：预处理SQL内容，移除注释但保留语句结构
+        content_no_comments = re.sub(r'--.*$', '', content, flags=re.MULTILINE)
+        content_no_comments = re.sub(r'/\*[\s\S]*?\*/', '', content_no_comments)
+        
+        # 第二步：分割SQL语句（更健壮的分割方式）
+        statements = []
+        current_stmt = []
+        in_string = False
+        string_char = None
+        
+        for char in content_no_comments:
+            if char in ('"', "'") and (not current_stmt or current_stmt[-1] != '\\'):
+                if in_string and char == string_char:
+                    in_string = False
+                    string_char = None
+                elif not in_string:
+                    in_string = True
+                    string_char = char
+                current_stmt.append(char)
+            elif char == ';' and not in_string:
+                stmt = ''.join(current_stmt).strip()
+                if stmt:
+                    statements.append(stmt)
+                current_stmt = []
+            else:
+                current_stmt.append(char)
+        
+        # 处理最后一个语句
+        if current_stmt:
+            stmt = ''.join(current_stmt).strip()
+            if stmt:
+                statements.append(stmt)
+        
+        print(f"[SQL-EXEC] 解析到 {len(statements)} 条SQL语句")
+        
+        for i, stmt in enumerate(statements):
+            print(f"[SQL-EXEC] 执行语句 {i+1}/{len(statements)}")
             
-            for stmt in statements:
-                # 检查是否是 CREATE TABLE 语句
-                create_match = re.match(r'CREATE\s+TABLE\s+`?([a-zA-Z0-9_]+)`?', stmt, re.IGNORECASE)
+            modified_stmt = stmt
+            
+            # MySQL -> SQLite 语法转换
+            modified_stmt = modified_stmt.replace('`', '')
+            modified_stmt = re.sub(r'AUTO_INCREMENT', 'AUTOINCREMENT', modified_stmt, flags=re.IGNORECASE)
+            modified_stmt = re.sub(r'DECIMAL\([^)]+\)', 'REAL', modified_stmt, flags=re.IGNORECASE)
+            modified_stmt = re.sub(r'DATETIME', 'TEXT', modified_stmt, flags=re.IGNORECASE)
+            modified_stmt = re.sub(r'DATE', 'TEXT', modified_stmt, flags=re.IGNORECASE)
+            modified_stmt = re.sub(r'VARCHAR\([^)]+\)', 'TEXT', modified_stmt, flags=re.IGNORECASE)
+            modified_stmt = re.sub(r'INT\([^)]*\)', 'INTEGER', modified_stmt, flags=re.IGNORECASE)
+            # 修复1：安全移除 FOREIGN KEY 约束（只移除 CONSTRAINT 行）
+            lines = modified_stmt.split('\n')
+            filtered_lines = []
+            for line in lines:
+                line_stripped = line.strip().upper()
+                if 'FOREIGN KEY' not in line_stripped and 'CONSTRAINT' not in line_stripped:
+                    filtered_lines.append(line)
+            modified_stmt = '\n'.join(filtered_lines)
+            # 修复2：移除CREATE TABLE语句中最后多余的逗号
+            modified_stmt = re.sub(r',\s*\)', ')', modified_stmt)
+            
+            # 检查是否是 CREATE TABLE 语句
+            create_match = re.search(r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-zA-Z0-9_]+)', modified_stmt, flags=re.IGNORECASE)
+            
+            if create_match:
+                table_name = create_match.group(1)
+                print(f"[SQL-EXEC]   创建表: {table_name}")
+            
+            # 执行语句
+            try:
+                cursor.execute(modified_stmt)
+                
                 if create_match:
-                    # 获取原始表名
-                    original_table_name = create_match.group(1)
-                    # 生成新的表名
-                    new_table_name = f"{table_prefix}{original_table_name}"
-                    # 替换表名
-                    modified_stmt = re.sub(r'CREATE\s+TABLE\s+`?([a-zA-Z0-9_]+)`?', f'CREATE TABLE `{new_table_name}`', stmt, flags=re.IGNORECASE)
-                    # 执行修改后的语句
-                    conn.execute(sa.text(modified_stmt))
-                    created_tables.append(new_table_name)
-                    # 记录表结构
-                    inspector = sa.inspect(engine)
-                    columns = inspector.get_columns(new_table_name)
-                    table_structures[new_table_name] = {
-                        'original_name': original_table_name,
-                        'columns': [{
-                            'name': col['name'],
-                            'type': str(col['type']),
-                            'nullable': col['nullable']
-                        } for col in columns]
-                    }
+                    print(f"[SQL-EXEC]   ✓ 表创建成功")
                 else:
-                    # 对于其他语句（如 INSERT），需要替换表名
-                    modified_stmt = stmt
-                    for table in created_tables:
-                        original_name = table_structures[table]['original_name']
-                        # 替换 INSERT INTO 语句中的表名
-                        modified_stmt = re.sub(
-                            r'INSERT\s+INTO\s+`?' + re.escape(original_name) + r'`?',
-                            f'INSERT INTO `{table}`',
-                            modified_stmt,
-                            flags=re.IGNORECASE
-                        )
-                    # 执行修改后的语句
-                    conn.execute(sa.text(modified_stmt))
-            
-            # 提交事务
-            trans.commit()
-            
-            # 获取每个表的数据
-            table_data = {}
-            for table in created_tables:
-                # 读取表数据
-                df = pd.read_sql_table(table, engine)
-                table_data[table] = {
-                    'original_name': table_structures[table]['original_name'],
-                    'columns': table_structures[table]['columns'],
-                    'data': df.to_dict('records'),
-                    'row_count': len(df)
+                    print(f"[SQL-EXEC]   ✓ 语句执行成功")
+            except Exception as e:
+                print(f"[SQL-EXEC]   ✗ 语句执行失败: {e}")
+                print(f"[SQL-EXEC]   失败的语句: {modified_stmt[:150]}...")
+                # 单条语句失败不中断
+        
+        conn.commit()
+        
+        # 从SQLite直接查询所有表名（最可靠的方式）
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+        all_tables = cursor.fetchall()
+        created_tables = [t[0] for t in all_tables]
+        
+        print(f"[SQL-EXEC] 成功创建 {len(created_tables)} 个表: {created_tables}")
+        
+        # 获取每个表的数据
+        tables = {}
+        for table_name in created_tables:
+            try:
+                # 获取表结构
+                cursor.execute(f"PRAGMA table_info({table_name})")
+                columns_info = cursor.fetchall()
+                columns = []
+                for col in columns_info:
+                    columns.append({
+                        'name': col[1],
+                        'type': col[2],
+                        'nullable': col[3] == 0
+                    })
+                
+                # 获取数据
+                cursor.execute(f"SELECT * FROM {table_name}")
+                rows = cursor.fetchall()
+                
+                # 转换为字典列表
+                data = []
+                for row in rows:
+                    row_dict = {}
+                    for i, col in enumerate(columns):
+                        row_dict[col['name']] = row[i]
+                    data.append(row_dict)
+                
+                tables[table_name] = {
+                    'original_name': table_name,
+                    'columns': columns,
+                    'data': data,
+                    'row_count': len(data)
                 }
                 
-        # 返回结果
+                print(f"[SQL-EXEC]   表 {table_name}: {len(data)} 行数据")
+                
+            except Exception as e:
+                print(f"[SQL-EXEC]   获取表 {table_name} 数据失败: {e}")
+                continue
+        
+        print(f"{'='*80}")
+        print(f"[SQL-EXEC] SQL解析完成，共 {len(tables)} 个表")
+        print(f"{'='*80}\n")
+        
         return {
             'status': 'ok',
-            'tables': table_data,
-            'table_prefix': table_prefix,
+            'tables': tables,
             'expires_at': (datetime.now() + timedelta(hours=24)).isoformat()
         }
         
     except Exception as e:
-        # 回滚事务
-        if 'trans' in locals():
-            trans.rollback()
-        # 清理已创建的表
-        try:
-            with engine.connect() as conn:
-                for table in created_tables:
-                    try:
-                        conn.execute(sa.text(f'DROP TABLE IF EXISTS `{table}`'))
-                    except:
-                        pass
-        except:
-            pass
+        import traceback
+        print(f"[SQL-EXEC] 致命错误: {e}")
+        print(traceback.format_exc())
         raise HTTPException(status_code=400, detail=f"SQL 执行失败：{str(e)}")
     finally:
-        # 关闭引擎
-        engine.dispose()
+        conn.close()
+
+
+def df_to_serializable_dict(df, n=5):
+    """将DataFrame转换为可JSON序列化的字典"""
+    import decimal
+    from datetime import date, datetime
+    
+    def convert_value(val):
+        if pd.isna(val):
+            return None
+        if isinstance(val, decimal.Decimal):
+            return float(val)
+        if isinstance(val, (date, datetime)):
+            return val.isoformat()
+        return val
+    
+    if len(df) == 0:
+        return []
+    
+    records = df.head(n).to_dict('records')
+    for record in records:
+        for key, value in record.items():
+            record[key] = convert_value(value)
+    return records
 
 
 def handle_file_upload(file_content: bytes, filename: str, session_id: Optional[str], db: Session):
@@ -213,11 +282,12 @@ def handle_file_upload(file_content: bytes, filename: str, session_id: Optional[
             filename=filename,
             row_count=row_count,
             columns=json.dumps(columns),
-            preview_data=json.dumps(df.head(5).to_dict('records'))
+            preview_data=json.dumps(df_to_serializable_dict(df, 5))
         )
         session_repository.create_session(new_session)
         
-        # 写入一条系统消息，便于“最近会话”恢复上下文
+        # 写入一条系统消息，便于"最近会话"恢复上下文
+        # 注意：只保存可以被JSON序列化的内容，不保存整个sql_result
         session_repository.create_session_message(SessionMessage(
             session_id=session_id,
             role=3,
@@ -225,8 +295,9 @@ def handle_file_upload(file_content: bytes, filename: str, session_id: Optional[
             extra=json.dumps({
                 "type": "upload",
                 "filename": filename,
-                "sql_content": sql_content[:1000],  # 只存储前 1000 个字符，避免存储过多内容
-                "sql_result": sql_result
+                "sql_content": sql_content,  # 存储完整SQL内容
+                # 不保存整个sql_result，只保存表名列表
+                "table_names": list(sql_result['tables'].keys()) if sql_result and 'tables' in sql_result else []
             }, ensure_ascii=False)
         ))
         
@@ -236,7 +307,7 @@ def handle_file_upload(file_content: bytes, filename: str, session_id: Optional[
             "message": "SQL 文件上传成功",
             "session_id": session_id,
             "filename": filename,
-            "data": df.head(5).to_dict('records'),
+            "data": df_to_serializable_dict(df, 5),
             "columns": columns,
             "row_count": row_count
         }

@@ -39,7 +39,7 @@
             type="textarea"
             :rows="1"
             placeholder="发消息或输入'/'选择技能"
-            @keyup.enter="handleSendMessage"
+            @keydown.enter.exact.prevent="handleSendMessage"
             class="chat-input"
             :autosize="{ minRows: 1, maxRows: 4 }"
             :disabled="loading"
@@ -200,15 +200,25 @@ const handleStop = () => {
 
 // 处理发送消息
 const handleSendMessage = () => {
+  // 🆕 空格处理：去除首尾空格，并检查是否为空白消息
+  const trimmedMessage = userInput.value.trim()
+
+  if (!trimmedMessage && pendingFiles.value.length === 0) {
+    // 空白消息且无文件，不发送
+    return
+  }
+
   if (pendingFiles.value.length > 0) {
     // 有文件待上传，触发发送带文件的消息
-    emit('send-with-files', userInput.value, pendingFiles.value)
+    emit('send-with-files', trimmedMessage, pendingFiles.value)
     // 清空输入和文件列表
     userInput.value = ''
     pendingFiles.value = []
   } else {
-    // 无文件，触发普通消息发送
-    emit('send-message', userInput.value)
+    // 无文件，触发普通消息发送（使用trim后的消息）
+    emit('send-message', trimmedMessage)
+    // 清空输入框
+    userInput.value = ''
   }
 }
 

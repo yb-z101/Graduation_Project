@@ -188,6 +188,22 @@ async def send_message(session_id: str, message: str, model_id: str, db: Session
     if not session_data:
         raise HTTPException(status_code=404, detail="会话不存在")
 
+    # 🆕 调试日志：检查SQL数据传递状态
+    sql_result = session_data.get("sql_result")
+    print(f"[SESSION-DEBUG] 发送消息 - Session: {session_id}")
+    print(f"[SESSION-DEBUG]   文件名: {session_data.get('filename')}")
+    print(f"[SESSION-DEBUG]   sql_content存在: {bool(session_data.get('sql_content'))}")
+    print(f"[SESSION-DEBUG]   sql_result存在: {bool(sql_result)}")
+
+    if sql_result and sql_result.get('tables'):
+        tables = sql_result['tables']
+        print(f"[SESSION-DEBUG]   表数量: {len(tables)}")
+        for tname, tdata in tables.items():
+            rows = len(tdata.get('data', []))
+            print(f"[SESSION-DEBUG]   - {tdata.get('original_name', tname)}: {rows}行数据")
+    else:
+        print(f"[SESSION-DEBUG]   ⚠️ 无sql_result或tables为空！")
+
     # 创建工作流状态
     state = {
         "session_id": session_id,
@@ -291,7 +307,14 @@ async def send_message(session_id: str, message: str, model_id: str, db: Session
         "result": analysis_result_dict,
         "chart_option": result.get("chart_option"),
         "error": result.get("error"),
-        "analysis_summary": result.get("analysis_summary")
+        "analysis_summary": result.get("analysis_summary"),
+        "generated_sql": result.get("generated_sql"),
+        # 多表数据支持
+        "is_multi_table_response": result.get("is_multi_table_response", False),
+        "multi_table_data": result.get("multi_table_data", None),
+        "current_table_name": result.get("current_table_name", None),
+        "total_rows": result.get("total_rows", None),
+        "displayed_rows": result.get("displayed_rows", None)
     }
 
 
