@@ -130,7 +130,7 @@ async def get_audit_stats(
 
 @router.post("/export")
 async def export_audit_logs(
-    format: str = Query("csv", regex="^(csv|json)$"),
+    format: str = Query("csv", pattern="^(csv|json)$"),
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
     db: Session = Depends(get_db)
