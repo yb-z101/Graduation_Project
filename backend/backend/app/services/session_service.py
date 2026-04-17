@@ -185,6 +185,9 @@ result = df
 
 async def send_message(session_id: str, message: str, model_id: str, db: Session) -> Dict[str, Any]:
     """发送消息并处理"""
+    from app.utils.audit_logger import get_audit_logger
+    audit_logger = get_audit_logger(db)
+
     # 获取会话数据
     session_data = get_session(session_id)
     if not session_data:
@@ -244,6 +247,17 @@ async def send_message(session_id: str, message: str, model_id: str, db: Session
         except:
             analysis_result_dict = None
     
+    # 审计日志：记录查询操作
+    audit_logger.log(
+        operation_type='CHAT_SEND',
+        session_id=session_id,
+        dataset_name=session_data.get("filename"),
+        dataset_type='sql' if session_data.get("sql_content") else 'file',
+        query_content=message,
+        status='success',
+        sensitivity_level=1
+    )
+
     db_task = AnalysisTask(
         task_name="对话分析任务",
         source_id=None,
@@ -270,6 +284,12 @@ async def send_message(session_id: str, message: str, model_id: str, db: Session
     assistant_content = result.get("analysis_summary") or result.get("error") or "分析完成"
     if result.get("chart_option"):
         assistant_content += "（已生成图表）"
+        audit_logger.log(
+            operation_type='CHART_GENERATE',
+            session_id=session_id,
+            query_content=message,
+            status='success'
+        )
 
     assistant_record = ChatRecord(
         task_id=db_task.id,
@@ -307,6 +327,9 @@ async def send_message(session_id: str, message: str, model_id: str, db: Session
     execution_log = []
     if '_logger' in result:
         execution_log = result['_logger'].get_logs()
+
+    # 刷新审计日志缓冲区
+    audit_logger.flush()
     
     # 返回结果
     return {

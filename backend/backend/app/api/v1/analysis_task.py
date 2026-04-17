@@ -405,3 +405,35 @@ def execute_session_analysis(
         chart_option=chart_option,
         data=result_json
     )
+
+
+@router.get("/decision")
+async def get_decision_analysis(
+    session_id: str,
+    db: Session = Depends(get_db)
+):
+    from app.core.session_manager import get_session
+    from app.agents.decision_agent import DecisionAgent
+
+    session_data = get_session(session_id)
+    if not session_data:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    df = session_data.get("dataframe")
+    columns = session_data.get("columns", [])
+    history = session_data.get("history", [])
+
+    if df is None or df.empty:
+        raise HTTPException(status_code=400, detail="会话数据为空，无法生成决策建议")
+
+    try:
+        agent = DecisionAgent()
+        report = agent.analyze(
+            df=df,
+            columns=columns,
+            user_query="请对当前数据集进行全面分析并给出决策建议",
+            history=[{"role": h.get("role", ""), "content": h.get("content", "")} for h in history[-10:]]
+        )
+        return {"status": "ok", "data": report}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}

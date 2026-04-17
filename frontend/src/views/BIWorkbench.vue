@@ -58,6 +58,16 @@
           >
             导出报告
           </el-button>
+          <el-button
+            type="primary"
+            size="default"
+            :icon="DataBoard"
+            class="dashboard-btn"
+            @click="$router.push('/dashboard')"
+          >
+            📌 我的看板
+            <el-badge v-if="pinnedCount > 0" :value="pinnedCount" class="pinned-badge" />
+          </el-button>
         </div>
       </el-header>
       
@@ -132,7 +142,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Document, List, Download } from '@element-plus/icons-vue'
+import { Document, List, Download, DataBoard } from '@element-plus/icons-vue'
 
 import { useChatStore } from '../store/chatStore'
 import { useSessionStore } from '../store'
@@ -171,6 +181,71 @@ const chatPanelRef = ref(null)
 const workspacePanelRef = ref(null)
 
 const currentFileName = computed(() => sessionStore.fileName)
+
+const pinnedCount = computed(() => {
+  try {
+    return JSON.parse(localStorage.getItem('pinnedCharts') || '[]').length
+  } catch {
+    return 0
+  }
+})
+
+const SESSION_STORAGE_PREFIX = 'zhixi_session_'
+const SESSION_TTL = 24 * 60 * 60 * 1000
+
+function saveSessionState() {
+  const sid = sessionStore.currentSessionId
+  if (!sid) return
+  try {
+    localStorage.setItem(SESSION_STORAGE_PREFIX + sid, JSON.stringify({
+      messages: messages.value,
+      workspaceTabs: workspaceTabs.value,
+      activeWorkspaceTab: activeWorkspaceTab.value,
+      timestamp: Date.now()
+    }))
+  } catch (e) {
+    console.warn('保存会话状态失败:', e)
+  }
+}
+
+function restoreSessionState() {
+  const sid = sessionStore.currentSessionId
+  if (!sid) return
+  try {
+    const raw = localStorage.getItem(SESSION_STORAGE_PREFIX + sid)
+    if (!raw) return
+    const state = JSON.parse(raw)
+    if (Date.now() - state.timestamp > SESSION_TTL) {
+      localStorage.removeItem(SESSION_STORAGE_PREFIX + sid)
+      return
+    }
+    messages.value = state.messages || []
+    workspaceTabs.value = state.workspaceTabs || []
+    activeWorkspaceTab.value = state.activeWorkspaceTab || ''
+  } catch (e) {
+    console.warn('恢复会话状态失败:', e)
+  }
+}
+
+function cleanupExpiredSessions() {
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (key && key.startsWith(SESSION_STORAGE_PREFIX)) {
+        try {
+          const state = JSON.parse(localStorage.getItem(key))
+          if (state && Date.now() - state.timestamp > SESSION_TTL) {
+            localStorage.removeItem(key)
+          }
+        } catch { /* ignore */ }
+      }
+    }
+  } catch { /* ignore */ }
+}
+
+watch([messages, workspaceTabs, activeWorkspaceTab], () => {
+  saveSessionState()
+}, { deep: true })
 
 const handleSendMessage = async (text) => {
   if (!text.trim()) return
@@ -781,9 +856,6 @@ const handleNewSession = () => {
 
 const handleSessionSelect = async (session) => {
   try {
-    messages.value = []
-    workspaceTabs.value = []
-    activeWorkspaceTab.value = ''
     executionProcessLog.value = []
     
     sessionStore.setCurrentSession(
@@ -792,6 +864,8 @@ const handleSessionSelect = async (session) => {
       [],
       session.columns || []
     )
+
+    restoreSessionState()
     
     if (session.isDatabase && session.connectionId) {
       currentDatabaseConnectionId = session.connectionId
@@ -909,6 +983,9 @@ onMounted(() => {
   console.log('智析工作台已加载')
   
   sessionStore.init()
+  
+  cleanupExpiredSessions()
+  restoreSessionState()
   
   const saved = localStorage.getItem('savedDatabaseConnections')
   if (saved) {
@@ -1082,6 +1159,34 @@ onMounted(() => {
           &:disabled {
             opacity: 0.5;
             cursor: not-allowed;
+          }
+        }
+        
+        .dashboard-btn {
+          position: relative;
+          width: 130px;
+          background: linear-gradient(135deg, #E8A0BF, #F093FB);
+          border: none;
+          color: #FFFFFF;
+          font-weight: 600;
+          border-radius: 8px;
+          padding: 10px 16px;
+          transition: all 0.2s ease;
+          
+          &:hover {
+            background: linear-gradient(135deg, #D48BB0, #E084EB);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(224, 132, 235, 0.35);
+          }
+          
+          &:active {
+            transform: translateY(0);
+          }
+          
+          .pinned-badge {
+            position: absolute;
+            top: -6px;
+            right: -6px;
           }
         }
       }

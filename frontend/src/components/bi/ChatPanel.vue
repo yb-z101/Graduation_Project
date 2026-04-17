@@ -2,6 +2,7 @@
   <div class="chat-panel">
     <div class="panel-header">
       <span class="panel-title">智能对话</span>
+      <span v-if="fileName" class="file-badge">{{ fileName }}</span>
     </div>
     
     <div class="messages-area" ref="messagesAreaRef">
@@ -128,6 +129,10 @@ const props = defineProps({
   loading: {
     type: Boolean,
     default: false
+  },
+  fileName: {
+    type: String,
+    default: ''
   }
 })
 
@@ -205,6 +210,19 @@ const handleSend = () => {
       font-weight: 600;
       color: #1D2129;
       letter-spacing: 0.3px;
+    }
+    
+    .file-badge {
+      font-size: 12px;
+      color: #6B5CE8;
+      background: #F9F0FF;
+      padding: 3px 12px;
+      border-radius: 12px;
+      border: 1px solid #E5D7F5;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 200px;
     }
   }
   

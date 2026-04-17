@@ -1,14 +1,26 @@
 <template>
   <div class="chart-wrapper">
-    <div class="chart-toolbar">
-      <button class="chart-btn" @click="copyChart" title="复制图表">
-        <span class="btn-icon">📋</span>
-        <span class="btn-text">复制</span>
-      </button>
-      <button class="chart-btn" @click="downloadChart" title="下载图表">
-        <span class="btn-icon">⬇️</span>
-        <span class="btn-text">下载</span>
-      </button>
+    <div class="chart-header">
+      <span class="chart-title">{{ option?.title?.text || '未命名图表' }}</span>
+      <div class="chart-toolbar">
+        <button 
+          class="chart-btn pin-btn" 
+          :class="{ pinned: isPinned }"
+          @click="togglePin"
+          :title="isPinned ? '已保存到看板' : '保存到我的看板'"
+        >
+          <span class="btn-icon">📌</span>
+          <span class="btn-text">{{ isPinned ? '已钉住' : '钉住' }}</span>
+        </button>
+        <button class="chart-btn" @click="copyChart" title="复制图表">
+          <span class="btn-icon">📋</span>
+          <span class="btn-text">复制</span>
+        </button>
+        <button class="chart-btn" @click="downloadChart" title="下载图表">
+          <span class="btn-icon">⬇️</span>
+          <span class="btn-text">下载</span>
+        </button>
+      </div>
     </div>
     <div class="chart-scroll-container">
       <div ref="echartsRef" v-show="chartLibId === 'echarts'" class="chart-container"></div>
@@ -30,13 +42,77 @@ const props = defineProps({
   chartLibId: {
     type: String,
     default: 'echarts'
+  },
+  chartId: {
+    type: String,
+    default: ''
+  },
+  sessionId: {
+    type: String,
+    default: ''
   }
 })
+
+const emit = defineEmits(['pin-chart', 'unpin-chart'])
 
 const echartsRef = ref(null)
 const g2Ref = ref(null)
 let echartsInstance = null
 let g2Chart = null
+const isPinned = ref(false)
+
+onMounted(() => {
+  initChart()
+  window.addEventListener('resize', handleResize)
+  checkPinnedStatus()
+})
+
+function checkPinnedStatus() {
+  const pinnedCharts = JSON.parse(localStorage.getItem('pinnedCharts') || '[]')
+  const id = props.chartId || `chart-${Date.now()}`
+  isPinned.value = pinnedCharts.some(c => c.chartId === id)
+}
+
+function togglePin() {
+  isPinned.value = !isPinned.value
+  const chartData = {
+    chartId: props.chartId || `chart-${Date.now()}`,
+    title: props.option?.title?.text || '未命名图表',
+    option: JSON.parse(JSON.stringify(props.option)),
+    chartLibId: props.chartLibId,
+    sessionId: props.sessionId,
+    pinnedAt: new Date().toISOString(),
+    screenshot: getChartImageBase64()
+  }
+
+  if (isPinned.value) {
+    saveToDashboard(chartData)
+    emit('pin-chart', chartData)
+  } else {
+    removeFromDashboard(props.chartId)
+    emit('unpin-chart', props.chartId)
+  }
+}
+
+function saveToDashboard(chartData) {
+  let pinnedCharts = JSON.parse(localStorage.getItem('pinnedCharts') || '[]')
+  const existingIndex = pinnedCharts.findIndex(c => c.chartId === chartData.chartId)
+  if (existingIndex > -1) {
+    pinnedCharts[existingIndex] = chartData
+  } else {
+    pinnedCharts.unshift(chartData)
+  }
+  if (pinnedCharts.length > 20) {
+    pinnedCharts = pinnedCharts.slice(0, 20)
+  }
+  localStorage.setItem('pinnedCharts', JSON.stringify(pinnedCharts))
+}
+
+function removeFromDashboard(chartId) {
+  let pinnedCharts = JSON.parse(localStorage.getItem('pinnedCharts') || '[]')
+  pinnedCharts = pinnedCharts.filter(c => c.chartId !== chartId)
+  localStorage.setItem('pinnedCharts', JSON.stringify(pinnedCharts))
+}
 
 const initECharts = async () => {
   await nextTick()
@@ -193,11 +269,6 @@ const handleResize = () => {
   }
 }
 
-onMounted(() => {
-  initChart()
-  window.addEventListener('resize', handleResize)
-})
-
 onUnmounted(() => {
   if (echartsInstance) {
     echartsInstance.dispose()
@@ -301,11 +372,30 @@ const downloadChart = () => {
   max-width: 100%;
 }
 
+.chart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.chart-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2937;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 12px;
+}
+
 .chart-toolbar {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   justify-content: flex-end;
-  margin-bottom: 8px;
 }
 
 .chart-btn {
@@ -330,6 +420,16 @@ const downloadChart = () => {
 
 .chart-btn:active {
   transform: scale(0.98);
+}
+
+.pin-btn.pinned {
+  background: #fef3c7;
+  border-color: #f59e0b;
+  color: #d97706;
+}
+
+.pin-btn.pinned:hover {
+  background: #fde68a;
 }
 
 .btn-icon {

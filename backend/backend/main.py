@@ -54,6 +54,7 @@ app.add_middleware(
 
 # 注册API路由
 from app.api import api_router
+
 app.include_router(api_router, prefix="/api")
 
 # 原有健康检查接口（保留，优化提示语）

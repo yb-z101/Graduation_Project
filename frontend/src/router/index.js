@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import ChatView from '@/views/Chat.vue'
 import BIWorkbench from '@/views/BIWorkbench.vue'
+import Dashboard from '@/views/Dashboard.vue'
 
 const routes = [
   {
@@ -12,6 +13,11 @@ const routes = [
     path: '/chat',
     name: 'Chat',
     component: ChatView
+  },
+  {
+    path: '/dashboard',
+    name: 'Dashboard',
+    component: Dashboard
   }
 ]
 

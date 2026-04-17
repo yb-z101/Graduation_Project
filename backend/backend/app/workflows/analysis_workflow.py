@@ -3,6 +3,7 @@ from typing import Dict, Any, Optional
 from app.utils.llm_client import call_llm, generate_pandas_code, generate_clean_code, generate_sql
 from app.utils.safe_executor import execute_pandas_code
 from app.utils.chart_generator import generate_chart_config
+from app.utils.intent_classifier import IntentClassifier
 
 
 # 定义工作流状态类型
@@ -31,6 +32,150 @@ def extract_chart_data(llm_response: str) -> Optional[Any]:
             except Exception:
                 continue
     return None
+
+
+def build_context_aware_data(tables_info: list, intent_type: str, query: str) -> str:
+    import pandas as pd
+    context_parts = []
+    
+    for tinfo in tables_info:
+        tname = tinfo['table_name']
+        cols = tinfo['columns']
+        data = tinfo['data']
+        col_names = [c['name'] for c in cols]
+        numeric_cols = [c['name'] for c in cols if c['type'] in ('int', 'float', 'number', 'int64', 'float64')]
+        
+        if intent_type == 'ranking_sort':
+            context_parts.append(f"### {tname}:\n- 列: {', '.join(col_names)}\n")
+            if numeric_cols and data:
+                df = pd.DataFrame(data)
+                for num_col in numeric_cols[:3]:
+                    try:
+                        sorted_df = df.sort_values(by=num_col, ascending=False)
+                        top5 = sorted_df.head(5)
+                        name_col = next((c for c in col_names if any(k in str(c).lower() for k in ['姓名', 'name', '名字'])), col_names[0])
+                        if name_col in df.columns:
+                            rankings = [(row[name_col], row[num_col]) for _, row in top5.iterrows() if name_col in row.index]
+                            context_parts.append(f"- {num_col} Top5: {rankings[:5]}\n")
+                    except Exception:
+                        pass
+                        
+        elif intent_type == 'visualization':
+            context_parts.append(f"### {tname} ({len(data)}行):\n- 列: {', '.join(col_names)}\n")
+            if numeric_cols and data:
+                df = pd.DataFrame(data)
+                for num_col in numeric_cols[:2]:
+                    try:
+                        context_parts.append(f"- {num_col}: min={df[num_col].min()}, max={df[num_col].max()}, avg={df[num_col].mean():.1f}\n")
+                    except Exception:
+                        pass
+                        
+        elif intent_type == 'statistical_analysis':
+            context_parts.append(f"### {tname} ({len(data)}行):\n- 列: {', '.join(col_names)}\n")
+            if data:
+                try:
+                    df = pd.DataFrame(data)
+                    context_parts.append(f"- 统计摘要:\n{df.describe().to_string()}\n")
+                except Exception:
+                    pass
+                    
+        else:
+            context_parts.append(f"### {tname} ({len(data)}行):\n- 列: {', '.join(col_names)}\n- 数据样本(前3行): {data[:3]}\n")
+    
+    return '\n'.join(context_parts)
+
+
+def generate_intent_specific_prompt(intent_type: str, intent_config: dict,
+                                   chart_intent: dict, table_info_str: str,
+                                   context_data: str, user_query: str,
+                                   total_tables: int, total_rows: int) -> str:
+    base_info = f"""你是一个专业的数据分析助手。已成功加载数据。
+
+## 📊 数据概览
+- 共 {total_tables} 个表，{total_rows} 条记录
+- 表结构：
+{table_info_str}
+
+## 📝 数据详情
+{context_data}
+
+## ❓ 用户问题
+{user_query}
+
+---
+
+⛔ **绝对禁止的行为（违反则回答无效）**：
+1. **禁止列出超过5条的数据记录**——不要输出"共X条数据，分别是张三,李四,王五..."这种格式
+2. **禁止返回全量原始数据**——用户要的是分析结论，不是数据倾倒
+3. **禁止回复"共XX条数据"作为主要内容**——这只是统计信息，不是答案
+4. 如果用户问的是具体数据（如某人的成绩），只返回匹配的那几条，不要返回全部
+"""
+    
+    prompt_map = {
+        'ranking_sort': f"""
+---
+
+## 📌 回答要求（排名/排序类）
+1. **直接给出排名结果**，格式如下：
+   **【排名结果】**
+   排名 | 指标值 | 备注
+   ---|---|---
+   1 | ... | ...
+   
+2. 文字总结不超过100字，重点突出Top3和最后3名
+3. 不要列举所有数据！只显示关键排名节点
+
+{'## 📈 图表要求\n如果需要生成图表，请同时返回JSON格式的图表数据' if chart_intent.get('requested') else ''}
+""",
+        'visualization': f"""
+---
+
+## 📌 回答要求（图表可视化类）
+1. **文字回复控制在50字以内**，例如："已为您生成{chart_intent.get('type') or ''}图，展示了..."
+2. **必须返回JSON格式的图表数据**：
+   ```json
+   {{
+     "chart_data": [
+       {{"name": "类别", "value": 数值}}
+     ],
+     "chart_type": "{chart_intent.get('type') or 'bar'}"
+   }}
+   ```
+3. 图表数据要完整准确，确保能正确渲染
+4. JSON和文字之间用空行分隔
+""",
+        'statistical_analysis': """
+---
+
+## 📌 回答要求（统计分析类）
+1. 直接给出统计结论，不要重复数据
+2. 格式示例："XX的平均值为YY，最大值为ZZ，最小值为WW"
+3. 如有异常值或特殊发现，单独指出
+4. 总字数控制在80字以内
+""",
+        'data_display': """
+---
+
+## 📌 回答要求（数据展示类）
+1. 先给出数据集概况（表名、记录数、主要字段）
+2. 如果数据量>20条，分组汇总展示；如果≤20条，可简要列出
+3. 重点突出关键字段的分布情况
+4. 总字数控制在120字以内
+""",
+        'general_query': """
+---
+
+## 📌 回答要求（通用查询）
+1. 基于提供的数据准确回答
+2. 语言简洁专业，直接给出结论
+3. 不要罗列所有原始数据
+4. 如果涉及具体记录，最多列出5条关键记录
+5. 总字数控制在100字以内
+"""
+    }
+    
+    specific_instruction = prompt_map.get(intent_type, prompt_map['general_query'])
+    return base_info + specific_instruction
 
 
 # 定义工作流节点
@@ -266,10 +411,18 @@ def process_query(state: typing_state) -> typing_state:
                     state['displayed_rows'] = len(display_data)
 
                 else:
-                    # 场景3: 多表查询 → 先生成SQL（体现工作量），再给LLM分析
-                    print(f"[SQL-ANALYSIS] 多表查询模式")
+                    # 场景3: 使用三层架构处理多表查询（意图分类 + 上下文裁剪 + 精准Prompt）
+                    print(f"[SQL-ANALYSIS] 多表查询模式（三层架构）")
                     
-                    # 1. 先生成SQL（体现工作量，不管是否能执行）
+                    # Layer 1: 意图分类
+                    intent_type, intent_config = IntentClassifier.classify(user_query, history)
+                    chart_intent = IntentClassifier.extract_chart_intent(user_query)
+                    print(f"[AI-ANALYSIS] 意图识别: {intent_type} | 图表意图: {chart_intent}")
+                    
+                    # Layer 2: 构建上下文感知的精简数据（避免信息过载导致冗余回复）
+                    context_data = build_context_aware_data(all_tables_info, intent_type, user_query)
+                    
+                    # 生成SQL（保留原有功能）
                     sql_generation_prompt = f"""你是一个SQL生成助手。用户上传了包含{total_tables}个表的SQL文件。
 
 ## 📋 所有表结构
@@ -296,60 +449,17 @@ def process_query(state: typing_state) -> typing_state:
                         print(f"[SQL-ANALYSIS] SQL生成失败: {e}")
                         state['generated_sql'] = None
                     
-                    # 2. 给LLM所有数据进行分析
-                    all_tables_data_str = ""
-                    for tinfo in all_tables_info:
-                        tname = tinfo['table_name']
-                        tdata = tinfo['data']
-                        all_tables_data_str += f"\n## 📊 表：{tname}\n"
-                        all_tables_data_str += f"列：{tinfo['column_info_str']}\n"
-                        all_tables_data_str += f"数据（共{len(tdata)}行）：\n"
-                        for i, row in enumerate(tdata[:50]):
-                            all_tables_data_str += f"  {i+1}. {str(row)}\n"
-                        if len(tdata) > 50:
-                            all_tables_data_str += f"  ... (还有 {len(tdata)-50} 行)\n"
-                    
-                    # 统一Prompt：不管是否需要图表，都支持复合问题
-                    analysis_prompt = f"""你是一个专业的数据分析助手。用户上传了SQL文件，已成功提取完整数据。
-
-## 📋 数据概览
-- 共 {total_tables} 个表，{total_rows_in_tables} 条记录
-- 所有表结构：
-{table_info_str}
-
-## 📝 完整数据
-{all_tables_data_str}
-
-## ❓ 用户问题
-{user_query}
-
----
-
-## 📌 回答要求
-1. **基于提供的完整数据回答**，不要说"没有数据"或"无法查询"
-2. **语言简洁专业**
-3. **直接给出结果，不要分析步骤**
-4. 如果你判断用户需要图表（查询中包含图表关键词），请同时返回JSON格式的数据：
-   ```json
-   {{
-     "chart_data": [
-       {{"name": "张三", "value": 100}},
-       {{"name": "李四", "value": 200}}
-     ]
-   }}
-   ```
-   注意：JSON和文字回答之间用空行分隔
-5. 如果用户没有明确要图表，只返回文字回答即可
-6. 如果查询的人不存在，明确说明数据中没有该记录
-7. **重要**：如果用户查询的是具体的数据记录（如某人的成绩、某产品的信息等），请在回答的最后用以下格式返回匹配的数据行：
-
-**【查询结果】**
-表名: [表名]
-[匹配的数据行，每行一条记录]
-
-如果没有匹配的数据，则不需要添加此部分。
-"""
-                    analysis_prompt = analysis_prompt.replace('{{', '{').replace('}}', '}')
+                    # Layer 3: 根据意图类型生成精准Prompt并调用LLM
+                    analysis_prompt = generate_intent_specific_prompt(
+                        intent_type=intent_type,
+                        intent_config=intent_config,
+                        chart_intent=chart_intent,
+                        table_info_str=table_info_str,
+                        context_data=context_data,
+                        user_query=user_query,
+                        total_tables=total_tables,
+                        total_rows=total_rows_in_tables
+                    )
                     
                     analysis_summary = call_llm(model_id, analysis_prompt)
                     
@@ -363,10 +473,8 @@ def process_query(state: typing_state) -> typing_state:
                         extracted_table_name = result_match.group(1).strip()
                         result_text = result_match.group(2).strip()
                         
-                        # 尝试解析数据行
                         data_lines = [line.strip() for line in result_text.split('\n') if line.strip() and not line.startswith('*')]
                         if data_lines and len(data_lines) > 0:
-                            # 找到对应的表结构
                             target_tinfo = None
                             for tinfo in all_tables_info:
                                 if tinfo['table_name'].lower() == extracted_table_name.lower():
@@ -376,8 +484,7 @@ def process_query(state: typing_state) -> typing_state:
                             if target_tinfo:
                                 columns = [c['name'] for c in target_tinfo['columns']]
                                 parsed_rows = []
-                                for line in data_lines[:20]:  # 限制最多20行
-                                    # 简单解析：按分隔符拆分
+                                for line in data_lines[:20]:
                                     values = re.split(r'[,\t|]', line)
                                     if len(values) == len(columns):
                                         row_dict = {col: val.strip() for col, val in zip(columns, values)}
@@ -387,7 +494,6 @@ def process_query(state: typing_state) -> typing_state:
                                     extracted_result_data = parsed_rows
                                     print(f"[SQL-ANALYSIS] ✅ 成功提取查询结果: {len(parsed_rows)}条记录 from {extracted_table_name}")
                     
-                    # 根据是否有提取到的数据决定返回值
                     if extracted_result_data:
                         import pandas as pd
                         state['analysis_result'] = pd.DataFrame(extracted_result_data)
@@ -395,12 +501,10 @@ def process_query(state: typing_state) -> typing_state:
                         state['is_multi_table_response'] = False
                         state['multi_table_data'] = None
                     else:
-                        # 不返回任何表数据，只返回文字分析
                         state['analysis_result'] = None
                         state['is_multi_table_response'] = False
                         state['multi_table_data'] = None
                     
-                    # 如果需要图表，尝试用容错函数提取数据
                     if wants_chart:
                         chart_df = extract_chart_data(analysis_summary)
                         if chart_df is not None:
