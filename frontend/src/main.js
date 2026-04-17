@@ -7,6 +7,7 @@ import * as ElementPlusIconsVue from '@element-plus/icons-vue' // 引入图标
 
 import App from './App.vue'
 import router from './router' // 确保路由文件存在
+import './components/bi/styles.css' // 引入BI组件全局样式
 
 // 开发环境下偶发的 ResizeObserver loop 报错会被 dev-server overlay 放大显示，
 // 通常由 UI 组件（如 Element Plus 表格/布局）触发，不影响功能。这里仅屏蔽这一条特定报错，

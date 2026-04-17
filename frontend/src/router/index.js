@@ -1,10 +1,15 @@
 import { createRouter, createWebHistory } from 'vue-router'
-// 【关键修改】这里必须引入 Chat.vue，绝对不能是 Upload.vue
 import ChatView from '@/views/Chat.vue'
+import BIWorkbench from '@/views/BIWorkbench.vue'
 
 const routes = [
   {
     path: '/',
+    name: 'BIWorkbench',
+    component: BIWorkbench
+  },
+  {
+    path: '/chat',
     name: 'Chat',
     component: ChatView
   }

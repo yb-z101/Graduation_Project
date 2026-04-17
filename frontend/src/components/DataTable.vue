@@ -11,9 +11,9 @@
     >
       <el-table-column 
         v-for="col in columns" 
-        :key="col"
-        :prop="col" 
-        :label="col"
+        :key="typeof col === 'string' ? col : col.prop"
+        :prop="typeof col === 'string' ? col : col.prop" 
+        :label="typeof col === 'string' ? col : col.label"
         :min-width="120"
         show-overflow-tooltip
         resizable
@@ -38,7 +38,7 @@ defineProps({
     required: true,
     default: () => []
   },
-  // 表头列名数组: ['name', 'age']
+  // 表头列名数组: ['name', 'age'] 或 [{prop: 'name', label: '姓名'}, ...]
   columns: {
     type: Array,
     required: true,

@@ -11,10 +11,12 @@ from app.repositories.analysis_repository import AnalysisRepository
 from app.utils.safe_executor import execute_pandas_code
 from app.utils.llm_client import generate_clean_code, call_qwen
 from app.workflows.analysis_workflow import create_analysis_workflow
+from app.workflows.analysis_workflow_with_logging import create_analysis_workflow_with_logging
 
 
 # 创建工作流实例
 analysis_workflow = create_analysis_workflow()
+analysis_workflow_with_logging = create_analysis_workflow_with_logging()
 
 
 def get_session_messages(session_id: str, limit: int, db: Session) -> Dict[str, Any]:
@@ -217,8 +219,10 @@ async def send_message(session_id: str, message: str, model_id: str, db: Session
         "model_id": model_id
     }
 
-    # 执行工作流
-    result = await analysis_workflow.ainvoke(state)
+    # 执行工作流（使用带日志的版本）
+    from app.workflows.analysis_workflow_with_logging import ExecutionLogger
+    state['_logger'] = ExecutionLogger()
+    result = await analysis_workflow_with_logging.ainvoke(state)
 
     # 更新会话历史
     if not session_data.get("history"):
@@ -236,7 +240,7 @@ async def send_message(session_id: str, message: str, model_id: str, db: Session
     analysis_result_dict = None
     if result.get("analysis_result") is not None:
         try:
-            analysis_result_dict = result.get("analysis_result").to_dict()
+            analysis_result_dict = result.get("analysis_result").to_dict(orient="records")
         except:
             analysis_result_dict = None
     
@@ -299,6 +303,11 @@ async def send_message(session_id: str, message: str, model_id: str, db: Session
     add_history(session_id, "user", message, {"task_id": db_task.id})
     add_history(session_id, "assistant", assistant_content, {"task_id": db_task.id})
 
+    # 获取执行日志
+    execution_log = []
+    if '_logger' in result:
+        execution_log = result['_logger'].get_logs()
+    
     # 返回结果
     return {
         "status": "ok",
@@ -309,6 +318,7 @@ async def send_message(session_id: str, message: str, model_id: str, db: Session
         "error": result.get("error"),
         "analysis_summary": result.get("analysis_summary"),
         "generated_sql": result.get("generated_sql"),
+        "execution_log": execution_log,
         # 多表数据支持
         "is_multi_table_response": result.get("is_multi_table_response", False),
         "multi_table_data": result.get("multi_table_data", None),

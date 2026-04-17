@@ -25,9 +25,9 @@ class DatabaseService:
                 pool_pre_ping=True,
                 pool_recycle=3600,
                 connect_args={
-                    'connect_timeout': 20,
-                    'read_timeout': 20,
-                    'write_timeout': 20
+                    'connect_timeout': 10,
+                    'read_timeout': 30,
+                    'write_timeout': 30
                 }
             )
             
@@ -57,30 +57,32 @@ class DatabaseService:
     
     def test_connection(self, host: str, port: int, username: str, password: str, database: str) -> Dict[str, Any]:
         """测试数据库连接"""
+        print(f"[DB-SERVICE] 开始测试连接: {username}@{host}:{port}/{database}")
         try:
-            # 创建数据库连接URL
             db_url = f"mysql+pymysql://{username}:{password}@{host}:{port}/{database}?charset=utf8mb4"
-            
-            # 创建引擎
+            print(f"[DB-SERVICE] 连接URL: mysql+pymysql://{username}:***@{host}:{port}/{database}")
+
             engine = sa.create_engine(
                 db_url,
                 pool_pre_ping=True,
                 connect_args={
-                    'connect_timeout': 20,
-                    'read_timeout': 20,
-                    'write_timeout': 20
+                    'connect_timeout': 10,
+                    'read_timeout': 30,
+                    'write_timeout': 30
                 }
             )
-            
-            # 测试连接
+
+            print("[DB-SERVICE] 引擎创建成功，正在测试连接...")
             with engine.connect() as conn:
                 conn.execute(sa.text("SELECT 1"))
-            
+            print("[DB-SERVICE] 连接测试成功！")
+
             return {
                 "status": "ok",
                 "message": "数据库连接测试成功"
             }
         except SQLAlchemyError as e:
+            print(f"[DB-SERVICE] 连接测试失败: {str(e)}")
             return {
                 "status": "error",
                 "message": f"数据库连接测试失败：{str(e)}"

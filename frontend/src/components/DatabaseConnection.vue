@@ -60,6 +60,10 @@ const props = defineProps({
   visible: {
     type: Boolean,
     default: false
+  },
+  presetConnection: {
+    type: Object,
+    default: null
   }
 })
 
@@ -73,6 +77,24 @@ const executingQuery = ref(false)
 // 监听visible属性变化
 watch(() => props.visible, (newVal) => {
   dialogVisible.value = newVal
+  if (newVal && props.presetConnection) {
+    connectionForm.host = props.presetConnection.host || 'localhost'
+    connectionForm.port = props.presetConnection.port || 3306
+    connectionForm.username = props.presetConnection.username || 'root'
+    connectionForm.password = props.presetConnection.password || ''
+    connectionForm.database = props.presetConnection.database || ''
+  }
+})
+
+// 监听预设连接
+watch(() => props.presetConnection, (newVal) => {
+  if (newVal) {
+    connectionForm.host = newVal.host || 'localhost'
+    connectionForm.port = newVal.port || 3306
+    connectionForm.username = newVal.username || 'root'
+    connectionForm.password = newVal.password || ''
+    connectionForm.database = newVal.database || ''
+  }
 })
 
 // 处理对话框关闭

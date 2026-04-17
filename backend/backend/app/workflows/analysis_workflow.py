@@ -341,15 +341,64 @@ def process_query(state: typing_state) -> typing_state:
    注意：JSON和文字回答之间用空行分隔
 5. 如果用户没有明确要图表，只返回文字回答即可
 6. 如果查询的人不存在，明确说明数据中没有该记录
+7. **重要**：如果用户查询的是具体的数据记录（如某人的成绩、某产品的信息等），请在回答的最后用以下格式返回匹配的数据行：
+
+**【查询结果】**
+表名: [表名]
+[匹配的数据行，每行一条记录]
+
+如果没有匹配的数据，则不需要添加此部分。
 """
                     analysis_prompt = analysis_prompt.replace('{{', '{').replace('}}', '}')
                     
                     analysis_summary = call_llm(model_id, analysis_prompt)
                     
-                    # 不返回任何表数据，只返回文字分析
-                    state['analysis_result'] = None
-                    state['is_multi_table_response'] = False
-                    state['multi_table_data'] = None
+                    # 尝试从AI回复中提取查询结果数据
+                    extracted_result_data = None
+                    extracted_table_name = None
+                    
+                    import re
+                    result_match = re.search(r'\*\*【查询结果】\*\*\s*\n\s*表名:\s*(\w+)\s*\n([\s\S]*?)(?=\n\n|\n$|$)', analysis_summary)
+                    if result_match:
+                        extracted_table_name = result_match.group(1).strip()
+                        result_text = result_match.group(2).strip()
+                        
+                        # 尝试解析数据行
+                        data_lines = [line.strip() for line in result_text.split('\n') if line.strip() and not line.startswith('*')]
+                        if data_lines and len(data_lines) > 0:
+                            # 找到对应的表结构
+                            target_tinfo = None
+                            for tinfo in all_tables_info:
+                                if tinfo['table_name'].lower() == extracted_table_name.lower():
+                                    target_tinfo = tinfo
+                                    break
+                            
+                            if target_tinfo:
+                                columns = [c['name'] for c in target_tinfo['columns']]
+                                parsed_rows = []
+                                for line in data_lines[:20]:  # 限制最多20行
+                                    # 简单解析：按分隔符拆分
+                                    values = re.split(r'[,\t|]', line)
+                                    if len(values) == len(columns):
+                                        row_dict = {col: val.strip() for col, val in zip(columns, values)}
+                                        parsed_rows.append(row_dict)
+                                
+                                if parsed_rows:
+                                    extracted_result_data = parsed_rows
+                                    print(f"[SQL-ANALYSIS] ✅ 成功提取查询结果: {len(parsed_rows)}条记录 from {extracted_table_name}")
+                    
+                    # 根据是否有提取到的数据决定返回值
+                    if extracted_result_data:
+                        import pandas as pd
+                        state['analysis_result'] = pd.DataFrame(extracted_result_data)
+                        state['current_table_name'] = extracted_table_name
+                        state['is_multi_table_response'] = False
+                        state['multi_table_data'] = None
+                    else:
+                        # 不返回任何表数据，只返回文字分析
+                        state['analysis_result'] = None
+                        state['is_multi_table_response'] = False
+                        state['multi_table_data'] = None
                     
                     # 如果需要图表，尝试用容错函数提取数据
                     if wants_chart:
@@ -438,6 +487,10 @@ def process_query(state: typing_state) -> typing_state:
 3. 不要说"没有数据"或"只有建表语句"，SQL文件中明确包含了INSERT数据
 4. 提供清晰、专业的分析结果
 """
+
+                        if wants_chart:
+                            prompt += "\n\n如果用户请求生成图表，请提供数据的结构信息。"
+
                         analysis_summary = call_llm(model_id, prompt)
                 else:
                     # 没有找到INSERT语句，使用原始SQL内容分析
@@ -479,140 +532,158 @@ def process_query(state: typing_state) -> typing_state:
             # 生成文本分析结果
             analysis_summary = ""
             
-            # 首先检查用户查询是否包含特定关键词
-            if '几个' in user_query or '多少' in user_query or '数量' in user_query:
-                # 回答数量问题
-                if '员工' in user_query or '人' in user_query:
-                    # 直接使用原始数据的行数
-                    count = len(original_data)
-                    analysis_summary = f"共 {count} 个"
-                    if count > 0:
-                        # 列出所有名称
-                        if '姓名' in original_data.columns:
-                            names = original_data['姓名'].tolist()
-                            analysis_summary += f"，分别是{', '.join(names)}"
-                        elif 'name' in original_data.columns:
-                            names = original_data['name'].tolist()
-                            analysis_summary += f"，分别是{', '.join(names)}"
-                elif '部门' in user_query:
-                    # 统计部门数量
-                    if '部门' in original_data.columns:
-                        unique_depts = original_data['部门'].unique().tolist()
-                        count = len(unique_depts)
-                        analysis_summary = f"共 {count} 个部门"
+            # 首先检查用户查询是否包含图表相关关键词
+            wants_chart = any(k in user_query for k in ["图表", "画图", "可视化", "折线图", "柱状图", "饼图"])
+            
+            # 如果是图表请求，不使用硬编码逻辑，让pandas代码和图表生成器处理
+            if not wants_chart:
+                # 首先检查用户查询是否包含特定关键词
+                if '几个' in user_query or '多少' in user_query or '数量' in user_query:
+                    # 回答数量问题
+                    if '员工' in user_query or '人' in user_query:
+                        # 直接使用原始数据的行数
+                        count = len(original_data)
+                        analysis_summary = f"共 {count} 个"
                         if count > 0:
-                            analysis_summary += f"，分别是{', '.join(unique_depts)}"
-                    elif 'department' in original_data.columns:
-                        unique_depts = original_data['department'].unique().tolist()
-                        count = len(unique_depts)
-                        analysis_summary = f"共 {count} 个部门"
-                        if count > 0:
-                            analysis_summary += f"，分别是{', '.join(unique_depts)}"
+                            # 列出所有名称
+                            if '姓名' in original_data.columns:
+                                names = original_data['姓名'].tolist()
+                                analysis_summary += f"，分别是{', '.join(names)}"
+                            elif 'name' in original_data.columns:
+                                names = original_data['name'].tolist()
+                                analysis_summary += f"，分别是{', '.join(names)}"
+                    elif '部门' in user_query:
+                        # 统计部门数量
+                        if '部门' in original_data.columns:
+                            unique_depts = original_data['部门'].unique().tolist()
+                            count = len(unique_depts)
+                            analysis_summary = f"共 {count} 个部门"
+                            if count > 0:
+                                analysis_summary += f"，分别是{', '.join(unique_depts)}"
+                        elif 'department' in original_data.columns:
+                            unique_depts = original_data['department'].unique().tolist()
+                            count = len(unique_depts)
+                            analysis_summary = f"共 {count} 个部门"
+                            if count > 0:
+                                analysis_summary += f"，分别是{', '.join(unique_depts)}"
+                        else:
+                            analysis_summary = "数据中没有部门列"
                     else:
-                        analysis_summary = "数据中没有部门列"
-                else:
-                    # 其他数量问题
-                    count = len(result)
-                    analysis_summary = f"共 {count} 条"
-            elif '最小' in user_query:
-                # 回答最小值问题
-                if '年龄' in user_query:
-                    if '年龄' in original_data.columns:
-                        min_age_row = original_data.loc[original_data['年龄'].idxmin()]
-                        name = min_age_row.get('姓名', min_age_row.get('name', '未知'))
-                        age = min_age_row['年龄']
-                        analysis_summary = f"{name}，{age}岁"
-                    elif 'age' in original_data.columns:
-                        min_age_row = original_data.loc[original_data['age'].idxmin()]
-                        name = min_age_row.get('姓名', min_age_row.get('name', '未知'))
-                        age = min_age_row['age']
-                        analysis_summary = f"{name}，{age}岁"
+                        # 其他数量问题
+                        count = len(result)
+                        analysis_summary = f"共 {count} 条"
+                elif '最小' in user_query:
+                    # 回答最小值问题
+                    if '年龄' in user_query:
+                        if '年龄' in original_data.columns:
+                            min_age_row = original_data.loc[original_data['年龄'].idxmin()]
+                            name = min_age_row.get('姓名', min_age_row.get('name', '未知'))
+                            age = min_age_row['年龄']
+                            analysis_summary = f"{name}，{age}岁"
+                        elif 'age' in original_data.columns:
+                            min_age_row = original_data.loc[original_data['age'].idxmin()]
+                            name = min_age_row.get('姓名', min_age_row.get('name', '未知'))
+                            age = min_age_row['age']
+                            analysis_summary = f"{name}，{age}岁"
+                        else:
+                            analysis_summary = "数据中没有年龄列"
                     else:
-                        analysis_summary = "数据中没有年龄列"
+                        # 其他最小值问题
+                        if len(result) > 0:
+                            analysis_summary = f"最小值为 {result.min().iloc[0]}"
+                elif '最大' in user_query:
+                    # 回答最大值问题
+                    if '年龄' in user_query:
+                        if '年龄' in original_data.columns:
+                            max_age_row = original_data.loc[original_data['年龄'].idxmax()]
+                            name = max_age_row.get('姓名', max_age_row.get('name', '未知'))
+                            age = max_age_row['年龄']
+                            analysis_summary = f"{name}，{age}岁"
+                        elif 'age' in original_data.columns:
+                            max_age_row = original_data.loc[original_data['age'].idxmax()]
+                            name = max_age_row.get('姓名', max_age_row.get('name', '未知'))
+                            age = max_age_row['age']
+                            analysis_summary = f"{name}，{age}岁"
+                        else:
+                            analysis_summary = "数据中没有年龄列"
+                    else:
+                        # 其他最大值问题
+                        if len(result) > 0:
+                            analysis_summary = f"最大值为 {result.max().iloc[0]}"
+                elif '平均' in user_query or '均值' in user_query:
+                    # 回答平均值问题
+                    if '年龄' in user_query:
+                        if '年龄' in original_data.columns:
+                            avg_age = original_data['年龄'].mean()
+                            analysis_summary = f"平均年龄为 {avg_age:.1f} 岁"
+                        elif 'age' in original_data.columns:
+                            avg_age = original_data['age'].mean()
+                            analysis_summary = f"平均年龄为 {avg_age:.1f} 岁"
+                        else:
+                            analysis_summary = "数据中没有年龄列"
+                    else:
+                        # 其他平均值问题
+                        if len(result) > 0:
+                            avg_value = result.mean().iloc[0]
+                            analysis_summary = f"平均值为 {avg_value:.1f}"
+                elif '数据分析' in user_query:
+                    # 通用数据分析请求
+                    analysis_summary = f"已对数据进行分析，共 {len(original_data)} 条记录"
+                    if '姓名' in original_data.columns:
+                        names = original_data['姓名'].tolist()
+                        analysis_summary += f"，包含员工：{', '.join(names)}"
+                    elif 'name' in original_data.columns:
+                        names = original_data['name'].tolist()
+                        analysis_summary += f"，包含员工：{', '.join(names)}"
                 else:
-                    # 其他最小值问题
+                    # 其他问题，生成通用回答
                     if len(result) > 0:
-                        analysis_summary = f"最小值为 {result.min().iloc[0]}"
-            elif '最大' in user_query:
-                # 回答最大值问题
-                if '年龄' in user_query:
-                    if '年龄' in original_data.columns:
-                        max_age_row = original_data.loc[original_data['年龄'].idxmax()]
-                        name = max_age_row.get('姓名', max_age_row.get('name', '未知'))
-                        age = max_age_row['年龄']
-                        analysis_summary = f"{name}，{age}岁"
-                    elif 'age' in original_data.columns:
-                        max_age_row = original_data.loc[original_data['age'].idxmax()]
-                        name = max_age_row.get('姓名', max_age_row.get('name', '未知'))
-                        age = max_age_row['age']
-                        analysis_summary = f"{name}，{age}岁"
-                    else:
-                        analysis_summary = "数据中没有年龄列"
-                else:
-                    # 其他最大值问题
-                    if len(result) > 0:
-                        analysis_summary = f"最大值为 {result.max().iloc[0]}"
-            elif '平均' in user_query or '均值' in user_query:
-                # 回答平均值问题
-                if '年龄' in user_query:
-                    if '年龄' in original_data.columns:
-                        avg_age = original_data['年龄'].mean()
-                        analysis_summary = f"平均年龄为 {avg_age:.1f} 岁"
-                    elif 'age' in original_data.columns:
-                        avg_age = original_data['age'].mean()
-                        analysis_summary = f"平均年龄为 {avg_age:.1f} 岁"
-                    else:
-                        analysis_summary = "数据中没有年龄列"
-                else:
-                    # 其他平均值问题
-                    if len(result) > 0:
-                        avg_value = result.mean().iloc[0]
-                        analysis_summary = f"平均值为 {avg_value:.1f}"
-            elif '数据分析' in user_query:
-                # 通用数据分析请求
-                analysis_summary = f"已对数据进行分析，共 {len(original_data)} 条记录"
-                if '姓名' in original_data.columns:
-                    names = original_data['姓名'].tolist()
-                    analysis_summary += f"，包含员工：{', '.join(names)}"
-                elif 'name' in original_data.columns:
-                    names = original_data['name'].tolist()
-                    analysis_summary += f"，包含员工：{', '.join(names)}"
-            else:
-                # 其他问题，生成通用回答
-                if len(result) > 0:
-                    # 检查结果是否与原始数据相同
-                    # 注意：Index 之间直接用 `==` 可能触发 “Lengths must match to compare”
-                    same_columns = False
-                    try:
-                        same_columns = (
-                            len(result.columns) == len(original_data.columns)
-                            and result.columns.equals(original_data.columns)
-                        )
-                    except Exception:
+                        # 检查结果是否与原始数据相同
+                        # 注意：Index 之间直接用 `==` 可能触发 "Lengths must match to compare"
                         same_columns = False
+                        try:
+                            same_columns = (
+                                len(result.columns) == len(original_data.columns)
+                                and result.columns.equals(original_data.columns)
+                            )
+                        except Exception:
+                            same_columns = False
 
-                    if len(result) == len(original_data) and same_columns:
-                        # 可能是查询所有数据
-                        analysis_summary = f"共 {len(result)} 条数据"
-                        if '姓名' in result.columns:
-                            names = result['姓名'].tolist()
-                            analysis_summary += f"，分别是{', '.join(names)}"
-                        elif 'name' in result.columns:
-                            names = result['name'].tolist()
-                            analysis_summary += f"，分别是{', '.join(names)}"
-                    else:
-                        # 其他分析结果
-                        analysis_summary = f"分析结果: 共 {len(result)} 条数据"
-                        if len(result) <= 5:
-                            # 结果较少，直接列出
+                        if len(result) == len(original_data) and same_columns:
+                            # 可能是查询所有数据
+                            analysis_summary = f"共 {len(result)} 条数据"
                             if '姓名' in result.columns:
                                 names = result['姓名'].tolist()
                                 analysis_summary += f"，分别是{', '.join(names)}"
                             elif 'name' in result.columns:
                                 names = result['name'].tolist()
                                 analysis_summary += f"，分别是{', '.join(names)}"
-                else:
-                    analysis_summary = "没有找到符合条件的数据"
+                        else:
+                            # 其他分析结果
+                            analysis_summary = f"分析结果: 共 {len(result)} 条数据"
+                            if len(result) <= 5:
+                                # 结果较少，直接列出
+                                if '姓名' in result.columns:
+                                    names = result['姓名'].tolist()
+                                    analysis_summary += f"，分别是{', '.join(names)}"
+                                elif 'name' in result.columns:
+                                    names = result['name'].tolist()
+                                    analysis_summary += f"，分别是{', '.join(names)}"
+                    else:
+                        analysis_summary = "没有找到符合条件的数据"
+            else:
+                # 图表请求，不使用硬编码逻辑，让图表生成器处理数据
+                analysis_summary = "已为您生成图表"
+                # 如果result和原始数据相同，使用原始数据以便图表生成器处理
+                try:
+                    same_columns = (
+                        len(result.columns) == len(original_data.columns)
+                        and result.columns.equals(original_data.columns)
+                    )
+                    if len(result) == len(original_data) and same_columns:
+                        state['analysis_result'] = original_data
+                except Exception:
+                    pass
         
         state['analysis_summary'] = analysis_summary
 

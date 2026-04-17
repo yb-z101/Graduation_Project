@@ -3,7 +3,7 @@ import { defineStore } from 'pinia'
 export const useSessionStore = defineStore('session', {
   state: () => ({
     sessionId: null,
-    filename: '',
+    fileName: '',
     previewData: [],
     columns: [],
     currentSessionId: null,
@@ -36,14 +36,14 @@ export const useSessionStore = defineStore('session', {
     
     setSession(data) {
       this.sessionId = data.session_id
-      this.filename = data.filename
+      this.fileName = data.filename
       this.previewData = data.preview
       this.columns = data.columns
     },
     
     clearSession() {
       this.sessionId = null
-      this.filename = ''
+      this.fileName = ''
       this.previewData = []
       this.columns = []
       this.sqlContent = null
@@ -52,7 +52,7 @@ export const useSessionStore = defineStore('session', {
     setCurrentSession(sessionId, fileName, data, columns, sqlContent = null) {
       this.currentSessionId = sessionId
       this.sessionId = sessionId
-      this.filename = fileName
+      this.fileName = fileName
       this.previewData = data
       this.columns = columns
       this.sqlContent = sqlContent

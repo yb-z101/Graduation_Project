@@ -86,25 +86,54 @@ def generate_pie_chart(df: pd.DataFrame, query: str, category_cols: List[str], n
     """
     生成饼图配置。
     """
-    if not category_cols or not numeric_cols:
+    # 智能选择合适的分类列，避免使用姓名列
+    name_keywords = ['姓名', 'name', '名字', '名称', '员工', 'student']
+    gender_keywords = ['性别', 'gender', 'sex', '男', '女']
+    
+    # 优先选择性别相关的列
+    selected_cat_col = None
+    for col in category_cols:
+        col_lower = str(col).lower()
+        if any(keyword in col_lower for keyword in gender_keywords):
+            selected_cat_col = col
+            break
+    
+    # 如果没有性别列，选择第一个不是姓名相关的列
+    if selected_cat_col is None:
+        for col in category_cols:
+            col_lower = str(col).lower()
+            if not any(keyword in col_lower for keyword in name_keywords):
+                selected_cat_col = col
+                break
+    
+    # 如果还是没找到，就使用第一个分类列
+    if selected_cat_col is None and category_cols:
+        selected_cat_col = category_cols[0]
+    
+    if not selected_cat_col:
         return {}
     
-    cat_col = category_cols[0]
-    num_col = numeric_cols[0]
-    
-    # 对数据进行分组和聚合
-    grouped = df.groupby(cat_col)[num_col].sum().reset_index()
+    # 检查是否有数值列，如果没有，就统计分类的数量
+    if not numeric_cols:
+        # 没有数值列，统计每个类别的数量
+        grouped = df.groupby(selected_cat_col).size().reset_index(name='count')
+        num_col = 'count'
+    else:
+        # 有数值列，使用第一个数值列
+        num_col = numeric_cols[0]
+        # 对数据进行分组和聚合
+        grouped = df.groupby(selected_cat_col)[num_col].sum().reset_index()
     
     return {
         "title": {"text": query[:30] + "..." if query else "数据分析结果"},
         "tooltip": {"trigger": "item", "formatter": "{a} <br/>{b}: {c} ({d}%)"},
-        "legend": {"orient": "vertical", "left": "left", "data": grouped[cat_col].tolist()},
+        "legend": {"orient": "vertical", "left": "left", "data": grouped[selected_cat_col].tolist()},
         "series": [{
             "name": num_col,
             "type": "pie",
             "radius": "50%",
             "data": [
-                {"value": row[num_col], "name": row[cat_col]}
+                {"value": row[num_col], "name": row[selected_cat_col]}
                 for _, row in grouped.iterrows()
             ],
             "emphasis": {

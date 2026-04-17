@@ -286,30 +286,40 @@ def handle_file_upload(file_content: bytes, filename: str, session_id: Optional[
         )
         session_repository.create_session(new_session)
         
+        # 准备所有表的预览数据（用于前端显示）
+        all_tables_info = {}
+        for table_name, table_data in tables.items():
+            all_tables_info[table_name] = {
+                'columns': table_data['columns'],
+                'row_count': table_data['row_count'],
+                'preview_data': df_to_serializable_dict(pd.DataFrame(table_data['data']), 5)
+            }
+        
         # 写入一条系统消息，便于"最近会话"恢复上下文
         # 注意：只保存可以被JSON序列化的内容，不保存整个sql_result
         session_repository.create_session_message(SessionMessage(
             session_id=session_id,
             role=3,
-            content=f"已上传文件：{filename}（{row_count} 行）",
+            content=f"已上传文件：{filename}（{row_count} 行，共 {len(tables)} 张表）",
             extra=json.dumps({
                 "type": "upload",
                 "filename": filename,
                 "sql_content": sql_content,  # 存储完整SQL内容
-                # 不保存整个sql_result，只保存表名列表
                 "table_names": list(sql_result['tables'].keys()) if sql_result and 'tables' in sql_result else []
             }, ensure_ascii=False)
         ))
         
-        # 返回 SQL 文件上传成功的响应
+        # 返回 SQL 文件上传成功的响应（包含所有表信息）
         return {
             "status": "ok",
-            "message": "SQL 文件上传成功",
+            "message": f"SQL 文件上传成功（共 {len(tables)} 张表）",
             "session_id": session_id,
             "filename": filename,
             "data": df_to_serializable_dict(df, 5),
             "columns": columns,
-            "row_count": row_count
+            "row_count": row_count,
+            "table_count": len(tables),
+            "all_tables_info": all_tables_info
         }
     else:
         # 处理 CSV 或 Excel 文件

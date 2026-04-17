@@ -18,9 +18,22 @@ app = FastAPI(
     version=settings.app.version,
     docs_url="/docs",
     swagger_ui_init_oauth={
-        "use_local_assets": True  # 关键：使用本地Swagger资源，不依赖CDN
+        "use_local_assets": True  # 关键：使用本地Swagger资源，不依赖CDN"
     }
 )
+
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    print(f"[ERROR] 全局异常: {str(exc)}")
+    import traceback
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=500,
+        content={"status": "error", "detail": f"服务器内部错误：{str(exc)}"}
+    )
 
 # 启动时自动建表（开发/答辩演示用）
 # 说明：如果你后续接入 Alembic 迁移，可替换为迁移脚本；create_all 重复执行是安全的（只会补缺失表）。
