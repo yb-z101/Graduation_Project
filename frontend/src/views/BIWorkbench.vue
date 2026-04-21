@@ -250,6 +250,34 @@ watch([messages, workspaceTabs, activeWorkspaceTab], () => {
 const handleSendMessage = async (text) => {
   if (!text.trim()) return
   
+  const findExistingTab = (title, type) => {
+    return workspaceTabs.value.findIndex(tab => {
+      if (tab.type !== type) return false
+      if (tab.title === title) return true
+      if (title === '分析结果' && tab.title === '分析结果') return true
+      if (type === 'table' && (
+        tab.title.startsWith(title + ' (') ||
+        tab.title.startsWith(title + '(')
+      )) return true
+      return false
+    })
+  }
+  
+  const upsertTab = (title, type, data, chartOption = null) => {
+    const existingIndex = findExistingTab(title, type)
+    if (existingIndex > -1) {
+      workspaceTabs.value[existingIndex].data = data
+      if (chartOption) workspaceTabs.value[existingIndex].chartOption = chartOption
+      activeWorkspaceTab.value = workspaceTabs.value[existingIndex].id
+    } else {
+      const tabId = `${type}-${Date.now()}`
+      const tab = { id: tabId, title, type, data }
+      if (chartOption) tab.chartOption = chartOption
+      workspaceTabs.value.push(tab)
+      activeWorkspaceTab.value = tabId
+    }
+  }
+  
   messages.value.push({ role: 'user', content: text })
   chatStore.setLoading(true)
   executionProcessLog.value = []
@@ -277,14 +305,7 @@ const handleSendMessage = async (text) => {
         )
         
         if (queryResult.status === 'ok') {
-          const tabId = `table-${Date.now()}`
-          workspaceTabs.value.push({
-            id: tabId,
-            title: '查询结果',
-            type: 'table',
-            data: queryResult.data
-          })
-          activeWorkspaceTab.value = tabId
+          upsertTab('查询结果', 'table', queryResult.data)
           
           let analysisSummary = `查询成功，共 ${queryResult.row_count} 条数据`
           
@@ -294,14 +315,7 @@ const handleSendMessage = async (text) => {
               import('@/utils/chartGenerator').then(module => {
                 const chartData = module.generate_chart_config(queryResult.data, text)
                 if (chartData) {
-                  const chartTabId = `chart-${Date.now()}`
-                  workspaceTabs.value.push({
-                    id: chartTabId,
-                    title: '可视化图表',
-                    type: 'chart',
-                    chartOption: chartData
-                  })
-                  activeWorkspaceTab.value = chartTabId
+                  upsertTab(`图表-${text.slice(0, 10)}`, 'chart', null, chartData)
                   analysisSummary += "（已生成图表）"
                 }
               })
@@ -348,85 +362,16 @@ const handleSendMessage = async (text) => {
           const tableNames = Object.keys(response.multi_table_data)
           tableNames.forEach((tableName, index) => {
             const tableData = response.multi_table_data[tableName]
-            
-            // 智能匹配：检查是否已存在相同表名的Tab（支持带行数后缀的格式）
-            const existingTabIndex = workspaceTabs.value.findIndex(
-              tab => tab.type === 'table' && (
-                tab.title === tableName || 
-                tab.title.startsWith(tableName + ' (') ||
-                tab.title.startsWith(tableName + '(')
-              )
-            )
-            
-            if (existingTabIndex > -1) {
-              // 更新现有Tab的数据
-              workspaceTabs.value[existingTabIndex].data = tableData.data
-              activeWorkspaceTab.value = workspaceTabs.value[existingTabIndex].id
-            } else {
-              // 创建新Tab
-              const tabId = `table-${Date.now()}-${index}`
-              workspaceTabs.value.push({
-                id: tabId,
-                title: tableName,
-                type: 'table',
-                data: tableData.data
-              })
-              if (workspaceTabs.value.length === 1 || index === 0) {
-                activeWorkspaceTab.value = tabId
-              }
-            }
+            upsertTab(tableName, 'table', tableData.data)
           })
         }
         else if (response.result) {
-          const tabId = `table-${Date.now()}`
-          let title = '分析结果'
-          if (response.current_table_name) {
-            title = response.current_table_name
-            
-            // 智能匹配：检查是否已存在相同表名的Tab（支持带行数后缀的格式）
-            const existingTabIndex = workspaceTabs.value.findIndex(
-              tab => tab.type === 'table' && (
-                tab.title === title || 
-                tab.title.startsWith(title + ' (') ||
-                tab.title.startsWith(title + '(')
-              )
-            )
-            
-            if (existingTabIndex > -1) {
-              // 更新现有Tab的数据
-              workspaceTabs.value[existingTabIndex].data = response.result
-              activeWorkspaceTab.value = workspaceTabs.value[existingTabIndex].id
-            } else {
-              // 创建新Tab
-              workspaceTabs.value.push({
-                id: tabId,
-                title: title,
-                type: 'table',
-                data: response.result
-              })
-              activeWorkspaceTab.value = tabId
-            }
-          } else {
-            // 通用标题"分析结果"，每次都创建新Tab
-            workspaceTabs.value.push({
-              id: tabId,
-              title: title,
-              type: 'table',
-              data: response.result
-            })
-            activeWorkspaceTab.value = tabId
-          }
+          let title = response.current_table_name || '分析结果'
+          upsertTab(title, 'table', response.result)
         }
         
         if (response.chart_option) {
-          const tabId = `chart-${Date.now()}`
-          workspaceTabs.value.push({
-            id: tabId,
-            title: '可视化图表',
-            type: 'chart',
-            chartOption: response.chart_option
-          })
-          activeWorkspaceTab.value = tabId
+          upsertTab(`图表-${text.slice(0, 10)}`, 'chart', null, response.chart_option)
         }
       }
     }
@@ -681,7 +626,7 @@ const handleDisconnectDatabase = async () => {
   }
 }
 
-const handleExportReport = () => {
+const handleExportReport = async () => {
   if (!sessionStore.currentSessionId) {
     ElMessage.warning('请先选择一个会话')
     return
@@ -725,6 +670,11 @@ const handleExportReport = () => {
         .message-content { font-size: 14px; white-space: pre-wrap; word-break: break-word; }
         pre { background: #1D2129; color: #F5F7FA; padding: 15px; border-radius: 6px; overflow-x: auto; font-size: 12px; }
         code { font-family: 'JetBrains Mono', Consolas, monospace; }
+        .chart-img { max-width: 100%; border-radius: 8px; border: 1px solid #E5E6EB; margin: 10px 0; }
+        .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 10px; }
+        .stat-item { padding: 8px 12px; background: #F0F5FF; border-radius: 6px; text-align: center; }
+        .stat-label { font-size: 11px; color: #869099; }
+        .stat-value { font-size: 16px; font-weight: 600; color: #6B5CE8; }
         .footer { text-align: center; margin-top: 40px; padding-top: 20px; border-top: 1px solid #E5E6EB; color: #869099; font-size: 12px; }
     </style>
 </head>
@@ -754,7 +704,78 @@ const handleExportReport = () => {
                 </div>
             </div>
         </div>
-        
+  `
+
+  // 数据统计摘要
+  const tableTabs = workspaceTabs.value.filter(t => t.type === 'table' && t.data && t.data.length > 0)
+  if (tableTabs.length > 0) {
+    htmlContent += `
+        <div class="section">
+            <div class="section-title">📊 数据统计摘要</div>
+    `
+    const seenTitles = new Set()
+    tableTabs.forEach(tab => {
+      if (seenTitles.has(tab.title)) return
+      seenTitles.add(tab.title)
+      const cols = Object.keys(tab.data[0])
+      const numericCols = cols.filter(col => tab.data.some(row => typeof row[col] === 'number' && !isNaN(row[col])))
+      htmlContent += `<h3 style="margin: 10px 0; color: #6B5CE8;">${tab.title}（${tab.data.length}行 × ${cols.length}列）</h3>`
+      if (numericCols.length > 0) {
+        htmlContent += `<div class="stat-grid">`
+        numericCols.slice(0, 8).forEach(col => {
+          const values = tab.data.map(row => Number(row[col])).filter(v => !isNaN(v))
+          if (values.length > 0) {
+            const min = Math.min(...values)
+            const max = Math.max(...values)
+            const avg = (values.reduce((a, b) => a + b, 0) / values.length).toFixed(1)
+            htmlContent += `
+              <div class="stat-item">
+                <div class="stat-label">${col}</div>
+                <div class="stat-value">${avg}</div>
+                <div class="stat-label">min:${min} max:${max}</div>
+              </div>
+            `
+          }
+        })
+        htmlContent += `</div>`
+      }
+    })
+    htmlContent += `</div>`
+  }
+
+  // 智能洞察
+  try {
+    const insightsRes = await sessionService.getInsights(sessionStore.currentSessionId, currentModel.value)
+    if (insightsRes.status === 'ok' && insightsRes.insights && insightsRes.insights.length > 0) {
+      htmlContent += `
+        <div class="section">
+            <div class="section-title">💡 智能洞察</div>
+            <ul style="padding-left: 20px; line-height: 2;">
+      `
+      insightsRes.insights.forEach(insight => {
+        htmlContent += `<li style="margin-bottom: 8px; color: #1D2129;">${insight.replace(/\n/g, '<br>')}</li>`
+      })
+      htmlContent += `</ul></div>`
+    }
+  } catch (e) {
+    console.warn('获取智能洞察失败:', e)
+  }
+
+  // SQL语句
+  const sqlMessages = messages.value.filter(m => m.type === 'code' && m.language === 'sql')
+  if (sqlMessages.length > 0) {
+    htmlContent += `
+        <div class="section">
+            <div class="section-title">🔧 生成的SQL语句</div>
+    `
+    sqlMessages.forEach((msg, i) => {
+      htmlContent += `<h3 style="margin: 10px 0; color: #6B5CE8;">SQL ${i + 1}</h3><pre><code>${msg.content}</code></pre>`
+    })
+    htmlContent += `</div>`
+  }
+
+  // 对话记录
+  htmlContent += `
         <div class="section">
             <div class="section-title">💬 对话记录</div>
   `
@@ -778,19 +799,23 @@ const handleExportReport = () => {
     `
   })
 
-  if (workspaceTabs.value.length > 0) {
+  htmlContent += `</div>`
+
+  // 数据预览（去重，每表只出现一次，展示前5行）
+  if (tableTabs.length > 0) {
     htmlContent += `
-        </div>
-        
         <div class="section">
             <div class="section-title">📈 数据预览</div>
     `
 
-    workspaceTabs.value.forEach(tab => {
-      if (tab.type === 'table' && tab.data && tab.data.length > 0) {
-        const columns = Object.keys(tab.data[0])
-        
-        htmlContent += `
+    const seenTableTitles = new Set()
+    tableTabs.forEach(tab => {
+      if (seenTableTitles.has(tab.title)) return
+      seenTableTitles.add(tab.title)
+      
+      const columns = Object.keys(tab.data[0])
+      
+      htmlContent += `
             <h3 style="margin: 15px 0 10px; color: #6B5CE8;">${tab.title}</h3>
             <table>
                 <thead>
@@ -800,29 +825,60 @@ const handleExportReport = () => {
                 </thead>
                 <tbody>
         `
-        
-        tab.data.slice(0, 50).forEach(row => {
-          htmlContent += `<tr>${columns.map(col => `<td>${row[col] !== undefined && row[col] !== null ? row[col] : '-'}</td>`).join('')}</tr>`
-        })
-        
-        if (tab.data.length > 50) {
-          htmlContent += `<tr><td colspan="${columns.length}" style="text-align: center; color: #869099;">... 还有 ${tab.data.length - 50} 条数据</td></tr>`
-        }
-        
-        htmlContent += `
+      
+      tab.data.slice(0, 5).forEach(row => {
+        htmlContent += `<tr>${columns.map(col => `<td>${row[col] !== undefined && row[col] !== null ? row[col] : '-'}</td>`).join('')}</tr>`
+      })
+      
+      if (tab.data.length > 5) {
+        htmlContent += `<tr><td colspan="${columns.length}" style="text-align: center; color: #869099;">... 共 ${tab.data.length} 条数据，仅展示前5条</td></tr>`
+      }
+      
+      htmlContent += `
                 </tbody>
             </table>
         `
-      }
     })
+    htmlContent += `</div>`
+  }
+
+  // 图表截图
+  const chartTabs = workspaceTabs.value.filter(t => t.type === 'chart' && t.chartOption)
+  if (chartTabs.length > 0) {
+    htmlContent += `
+        <div class="section">
+            <div class="section-title">📉 分析图表</div>
+    `
+    chartTabs.forEach(tab => {
+      const chartTitle = tab.chartOption?.title?.text || tab.title
+      htmlContent += `<h3 style="margin: 10px 0; color: #6B5CE8;">${chartTitle}</h3>`
+      htmlContent += `<div id="chart-${tab.id}" style="width:100%; height:400px; margin: 10px 0;"></div>`
+    })
+    htmlContent += `
+        </div>
+        <scr` + `ipt src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></scr` + `ipt>
+        <scr` + `ipt>
+    `
+    chartTabs.forEach(tab => {
+      const optionJson = JSON.stringify(tab.chartOption).replace(/</g, '\\u003c').replace(/<\/script/g, '\\u003c/script')
+      htmlContent += `
+        (function() {
+          var el = document.getElementById('chart-${tab.id}');
+          if (el && window.echarts) {
+            var chart = echarts.init(el);
+            chart.setOption(${optionJson});
+            window.addEventListener('resize', function() { chart.resize(); });
+          }
+        })();
+      `
+    })
+    htmlContent += `</scr` + `ipt>`
   }
 
   htmlContent += `
-        </div>
-        
         <div class="footer">
             <p>本报告由 智析（Intelligent Data Analysis）自动生成</p>
-            <p>© ${new Date().getFullYear()} 智析数据分析平台</p>
+            <p>&copy; ${new Date().getFullYear()} 智析数据分析平台</p>
         </div>
     </div>
 </body>

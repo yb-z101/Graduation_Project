@@ -31,7 +31,8 @@ class ReportService:
         chart_option: Dict = None,
         analysis_summary: str = None,
         sql_content: str = None,
-        sql_result: Dict = None
+        sql_result: Dict = None,
+        chart_images: List[str] = None
     ) -> bytes:
         """
         生成完整的PDF分析报告
@@ -240,11 +241,30 @@ class ReportService:
             ]))
             story.append(summary_table)
 
-        # 6. 图表说明（如果有）
-        if chart_option:
+        # 6. 图表（如果有）
+        if chart_images:
+            story.append(Spacer(1, 0.3*inch))
+            story.append(Paragraph("📈 五、分析图表", heading_style))
+            for i, img_b64 in enumerate(chart_images):
+                try:
+                    import base64
+                    img_bytes = base64.b64decode(img_b64.split(',')[-1] if ',' in img_b64 else img_b64)
+                    from reportlab.lib.utils import ImageReader
+                    img_reader = ImageReader(io.BytesIO(img_bytes))
+                    iw, ih = img_reader.getSize()
+                    max_w = 14 * cm
+                    max_h = 10 * cm
+                    ratio = min(max_w / iw, max_h / ih)
+                    story.append(Image(img_reader, width=iw * ratio, height=ih * ratio))
+                    if len(chart_images) > 1:
+                        story.append(Paragraph(f"<i>图表 {i+1}</i>", body_style))
+                    story.append(Spacer(1, 0.2*inch))
+                except Exception:
+                    story.append(Paragraph(f"<i>图表 {i+1} 无法渲染</i>", body_style))
+        elif chart_option:
             story.append(Spacer(1, 0.3*inch))
             story.append(Paragraph("📈 五、图表配置", heading_style))
-            story.append(Paragraph("<i>本次分析生成了可视化图表配置，可在系统中查看交互式图表。</i>", body_style))
+            story.append(Paragraph("<i>本次分析生成了可视化图表，可在系统中查看交互式图表。</i>", body_style))
 
         # 生成PDF
         doc.build(story)
@@ -253,11 +273,9 @@ class ReportService:
 
     def _format_markdown_for_pdf(self, text: str) -> str:
         """将简单的Markdown转换为ReportLab可识别的格式"""
-        # 处理粗体
-        text = text.replace('**', '<b>').replace('</b><b>', '**')  # 简单处理
-        # 处理代码块
-        text = text.replace('```', '<font face="Courier" size="9">').replace('</font>', '```')
-        # 处理换行
+        import re
+        text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
+        text = re.sub(r'```(\w*)\n?(.*?)```', r'<font face="Courier" size="9">\2</font>', text, flags=re.DOTALL)
         text = text.replace('\n\n', '<br/><br/>').replace('\n', '<br/>')
 
         return text

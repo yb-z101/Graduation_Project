@@ -319,10 +319,22 @@ async def send_message(session_id: str, message: str, model_id: str, db: Session
     add_history(session_id, "user", message, {"task_id": db_task.id})
     add_history(session_id, "assistant", assistant_content, {"task_id": db_task.id})
 
-    # 获取执行日志
+    # 构建执行日志
     execution_log = []
-    if '_logger' in result:
-        execution_log = result['_logger'].get_logs()
+    from datetime import datetime as dt
+    t0 = dt.now().isoformat(timespec='seconds')
+    intent = result.get("intent", "unknown")
+    execution_log.append({"node": "意图识别", "status": "success", "description": f"识别意图: {intent}", "timestamp": t0})
+    if result.get("generated_sql"):
+        execution_log.append({"node": "SQL生成", "status": "success", "description": "已生成查询SQL", "timestamp": t0, "code": result["generated_sql"], "language": "sql"})
+    if result.get("analysis_result") is not None:
+        execution_log.append({"node": "数据分析", "status": "success", "description": "数据分析完成", "timestamp": t0})
+    if result.get("chart_option"):
+        execution_log.append({"node": "图表生成", "status": "success", "description": "已生成可视化图表", "timestamp": t0})
+    if result.get("error"):
+        execution_log.append({"node": "异常", "status": "error", "description": result["error"], "timestamp": t0})
+    if not result.get("error"):
+        execution_log.append({"node": "完成", "status": "success", "description": "分析流程结束", "timestamp": t0})
 
     # 刷新审计日志缓冲区
     audit_logger.flush()

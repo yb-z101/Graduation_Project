@@ -673,9 +673,12 @@ def process_query(state: typing_state) -> typing_state:
                         else:
                             analysis_summary = "数据中没有部门列"
                     else:
-                        # 其他数量问题
-                        count = len(result)
-                        analysis_summary = f"共 {count} 条"
+                        # 其他数量问题，回退到LLM生成摘要
+                        if len(result) > 0:
+                            sample = result.head(5).to_string()
+                            analysis_summary = call_llm(model_id, f"基于以下数据回答问题：{user_query}\n\n数据：\n{sample}")
+                            if not analysis_summary or '调用大模型失败' in analysis_summary:
+                                analysis_summary = f"共 {len(result)} 条记录"
                 elif '最小' in user_query:
                     # 回答最小值问题
                     if '年龄' in user_query:
@@ -692,9 +695,12 @@ def process_query(state: typing_state) -> typing_state:
                         else:
                             analysis_summary = "数据中没有年龄列"
                     else:
-                        # 其他最小值问题
+                        # 其他最小值问题，回退到LLM
                         if len(result) > 0:
-                            analysis_summary = f"最小值为 {result.min().iloc[0]}"
+                            sample = result.head(5).to_string()
+                            analysis_summary = call_llm(model_id, f"基于以下数据回答问题：{user_query}\n\n数据：\n{sample}")
+                            if not analysis_summary or '调用大模型失败' in analysis_summary:
+                                analysis_summary = f"最小值为 {result.min().iloc[0]}"
                 elif '最大' in user_query:
                     # 回答最大值问题
                     if '年龄' in user_query:
@@ -711,9 +717,12 @@ def process_query(state: typing_state) -> typing_state:
                         else:
                             analysis_summary = "数据中没有年龄列"
                     else:
-                        # 其他最大值问题
+                        # 其他最大值问题，回退到LLM
                         if len(result) > 0:
-                            analysis_summary = f"最大值为 {result.max().iloc[0]}"
+                            sample = result.head(5).to_string()
+                            analysis_summary = call_llm(model_id, f"基于以下数据回答问题：{user_query}\n\n数据：\n{sample}")
+                            if not analysis_summary or '调用大模型失败' in analysis_summary:
+                                analysis_summary = f"最大值为 {result.max().iloc[0]}"
                 elif '平均' in user_query or '均值' in user_query:
                     # 回答平均值问题
                     if '年龄' in user_query:
@@ -726,10 +735,13 @@ def process_query(state: typing_state) -> typing_state:
                         else:
                             analysis_summary = "数据中没有年龄列"
                     else:
-                        # 其他平均值问题
+                        # 其他平均值问题，回退到LLM
                         if len(result) > 0:
-                            avg_value = result.mean().iloc[0]
-                            analysis_summary = f"平均值为 {avg_value:.1f}"
+                            sample = result.head(5).to_string()
+                            analysis_summary = call_llm(model_id, f"基于以下数据回答问题：{user_query}\n\n数据：\n{sample}")
+                            if not analysis_summary or '调用大模型失败' in analysis_summary:
+                                avg_value = result.mean().iloc[0]
+                                analysis_summary = f"平均值为 {avg_value:.1f}"
                 elif '数据分析' in user_query:
                     # 通用数据分析请求
                     analysis_summary = f"已对数据进行分析，共 {len(original_data)} 条记录"
@@ -740,39 +752,12 @@ def process_query(state: typing_state) -> typing_state:
                         names = original_data['name'].tolist()
                         analysis_summary += f"，包含员工：{', '.join(names)}"
                 else:
-                    # 其他问题，生成通用回答
+                    # 其他问题，回退到LLM生成摘要
                     if len(result) > 0:
-                        # 检查结果是否与原始数据相同
-                        # 注意：Index 之间直接用 `==` 可能触发 "Lengths must match to compare"
-                        same_columns = False
-                        try:
-                            same_columns = (
-                                len(result.columns) == len(original_data.columns)
-                                and result.columns.equals(original_data.columns)
-                            )
-                        except Exception:
-                            same_columns = False
-
-                        if len(result) == len(original_data) and same_columns:
-                            # 可能是查询所有数据
-                            analysis_summary = f"共 {len(result)} 条数据"
-                            if '姓名' in result.columns:
-                                names = result['姓名'].tolist()
-                                analysis_summary += f"，分别是{', '.join(names)}"
-                            elif 'name' in result.columns:
-                                names = result['name'].tolist()
-                                analysis_summary += f"，分别是{', '.join(names)}"
-                        else:
-                            # 其他分析结果
+                        sample = result.head(10).to_string()
+                        analysis_summary = call_llm(model_id, f"基于以下数据回答问题：{user_query}\n\n数据：\n{sample}")
+                        if not analysis_summary or '调用大模型失败' in analysis_summary:
                             analysis_summary = f"分析结果: 共 {len(result)} 条数据"
-                            if len(result) <= 5:
-                                # 结果较少，直接列出
-                                if '姓名' in result.columns:
-                                    names = result['姓名'].tolist()
-                                    analysis_summary += f"，分别是{', '.join(names)}"
-                                elif 'name' in result.columns:
-                                    names = result['name'].tolist()
-                                    analysis_summary += f"，分别是{', '.join(names)}"
                     else:
                         analysis_summary = "没有找到符合条件的数据"
             else:

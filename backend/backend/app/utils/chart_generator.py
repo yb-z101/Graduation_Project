@@ -14,7 +14,6 @@ def generate_chart_config(df: pd.DataFrame, query: str) -> Dict[str, Any]:
     category_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
     date_cols = []
     
-    # 尝试识别日期列
     for col in df.columns:
         try:
             pd.to_datetime(df[col], errors='raise')
@@ -22,26 +21,35 @@ def generate_chart_config(df: pd.DataFrame, query: str) -> Dict[str, Any]:
         except:
             pass
 
-    # 根据查询内容和数据特点选择图表类型
     chart_type = determine_chart_type(query, df, numeric_cols, category_cols, date_cols)
     
-    # 如果用户没有指定图表类型，默认使用表格，不生成图表
     if chart_type == 'table':
         return {}
+
+    relevant_numeric = _filter_relevant_cols(query, numeric_cols)
     
-    # 生成对应类型的图表配置
     if chart_type == 'pie':
-        return generate_pie_chart(df, query, category_cols, numeric_cols)
+        return generate_pie_chart(df, query, category_cols, relevant_numeric)
     elif chart_type == 'scatter':
-        return generate_scatter_chart(df, query, numeric_cols)
+        return generate_scatter_chart(df, query, relevant_numeric)
     elif chart_type == 'radar':
-        return generate_radar_chart(df, query, numeric_cols)
+        return generate_radar_chart(df, query, relevant_numeric)
     elif chart_type == 'line':
-        return generate_line_chart(df, query, date_cols, numeric_cols, category_cols)
+        return generate_line_chart(df, query, date_cols, relevant_numeric, category_cols)
     elif chart_type == 'bar':
-        return generate_bar_chart(df, query, category_cols, numeric_cols)
+        return generate_bar_chart(df, query, category_cols, relevant_numeric)
     else:
         return {}
+
+
+def _filter_relevant_cols(query: str, numeric_cols: List[str]) -> List[str]:
+    """从用户查询中匹配相关的数值列，未匹配到则返回全部"""
+    matched = []
+    for col in numeric_cols:
+        col_str = str(col)
+        if col_str in query or col_str.lower() in query.lower():
+            matched.append(col)
+    return matched if matched else numeric_cols
 
 
 def determine_chart_type(query: str, df: pd.DataFrame, numeric_cols: List[str], category_cols: List[str], date_cols: List[str]) -> str:
