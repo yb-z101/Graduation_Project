@@ -113,6 +113,23 @@
         </el-button>
       </div>
     </div>
+
+    <el-dialog v-model="showPreviewDialog" title="文件预览" width="680px" :close-on-click-modal="false">
+      <div v-if="previewData && previewData.preview" style="padding:8px 0;">
+        <div style="display:flex;gap:24px;padding:12px 16px;background:#F5F7FA;border-radius:6px;margin-bottom:12px;font-size:13px;color:#4E5969;">
+          <span><b>文件名：</b>{{ previewData.filename }}</span>
+          <span><b>行数：</b>{{ previewData.preview?.length || 0 }}</span>
+          <span><b>列数：</b>{{ previewData.columns?.length || 0 }}</span>
+        </div>
+        <el-table :data="previewData.preview || []" size="small" border stripe max-height="320">
+          <el-table-column v-for="(col, ci) in (previewData.columns || [])" :key="ci" :prop="col" :label="col" min-width="100" show-overflow-tooltip />
+        </el-table>
+      </div>
+      <template #footer>
+        <el-button @click="showPreviewDialog = false; previewData = null">取消上传</el-button>
+        <el-button type="primary" @click="confirmUpload">确认上传</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -136,7 +153,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['send-message', 'file-upload', 'database-connect'])
+const emit = defineEmits(['send-message', 'file-upload', 'database-connect', 'preview-file'])
 
 const inputText = ref('')
 const messagesAreaRef = ref(null)
@@ -156,12 +173,27 @@ const handleFileChange = (uploadFile) => {
     return
   }
 
-  console.log('[ChatPanel] 文件已选择:', file.name, '大小:', file.size)
-  emit('file-upload', file)
+  emit('preview-file', file, (result) => {
+    if (result && result.preview) {
+      showPreviewDialog.value = true
+      previewData.value = result
+    } else {
+      emit('file-upload', file)
+    }
+  })
 
   if (uploadRef.value) {
     uploadRef.value.clearFiles()
   }
+}
+
+const showPreviewDialog = ref(false)
+const previewData = ref(null)
+
+const confirmUpload = () => {
+  emit('file-upload', previewData.value?._file)
+  showPreviewDialog.value = false
+  previewData.value = null
 }
 
 const scrollToBottom = () => {

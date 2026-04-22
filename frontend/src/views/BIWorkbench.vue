@@ -48,6 +48,22 @@
           >
             查看执行日志
           </el-button>
+          <el-button type="primary" size="default" class="clean-btn" @click="showCleanPanel = !showCleanPanel" :disabled="!sessionStore.currentSessionId">
+            数据清洗
+          </el-button>
+          <el-button type="primary" size="default" class="insight-btn" @click="handleGenerateInsights" :loading="insightsLoading" :disabled="!sessionStore.currentSessionId">
+            智能洞察
+          </el-button>
+          <el-dropdown trigger="click" @command="handleToolCommand" class="tool-dropdown">
+            <el-button type="primary" size="default" class="more-tool-btn">更多工具 ▾</el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="audit">审计日志</el-dropdown-item>
+                <el-dropdown-item command="datasource">数据源管理</el-dropdown-item>
+                <el-dropdown-item command="task">分析任务</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
           <el-button
             type="primary"
             size="default"
@@ -86,6 +102,7 @@
             @new-session="handleNewSession"
             @session-select="handleSessionSelect"
             @session-delete="handleSessionDelete"
+            @clear-all-sessions="handleClearAllSessions"
           />
         </el-aside>
         
@@ -99,6 +116,7 @@
                 @send-message="handleSendMessage"
                 @file-upload="handleFileUpload"
                 @database-connect="showDatabaseConnectionDialog = true"
+                @preview-file="handlePreviewFile"
               />
             </el-col>
             
@@ -136,13 +154,46 @@
       @query-result="handleDatabaseQueryResult"
       @close="showDatabaseConnectionDialog = false; presetConnection = null"
     />
+
+    <el-drawer v-model="showCleanPanel" title="数据清洗" size="520px" direction="rtl" class="clean-drawer">
+      <DataCleanPanel ref="dataCleanPanelRef" :session-id="sessionStore.currentSessionId || ''" @clean-completed="handleCleanCompleted" />
+    </el-drawer>
+
+    <el-dialog v-model="showInsightsDialog" title="智能洞察" width="560px">
+      <div v-if="insightsLoading" style="display:flex;flex-direction:column;align-items:center;gap:16px;padding:60px 20px;color:#869099;">
+        <el-icon class="is-loading" :size="32"><Loading /></el-icon>
+        <p>正在分析数据，生成智能洞察...</p>
+      </div>
+      <div v-else-if="insightsList.length > 0" style="padding:16px 0;">
+        <div v-for="(insight, idx) in insightsList" :key="idx" style="display:flex;align-items:flex-start;gap:14px;padding:14px 18px;background:#FFF;border-radius:10px;border:1px solid #E8E3FF;margin-bottom:10px;">
+          <span style="width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,#722ED1,#9254DE);color:#FFF;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">{{ idx + 1 }}</span>
+          <span style="font-size:14px;line-height:1.7;color:#1D2129;">{{ insight }}</span>
+        </div>
+      </div>
+      <div v-else style="text-align:center;padding:50px 20px;color:#869099;">
+        <p>暂无洞察结果</p>
+        <p style="font-size:13px;">请先上传数据并发起分析对话</p>
+      </div>
+    </el-dialog>
+
+    <el-dialog v-model="showAuditDialog" title="审计日志" width="780px">
+      <AuditPanel ref="auditPanelRef" />
+    </el-dialog>
+
+    <el-dialog v-model="showDatasourceDialog" title="数据源管理" width="620px">
+      <DataSourceManager />
+    </el-dialog>
+
+    <el-dialog v-model="showTaskDialog" title="分析任务管理" width="720px">
+      <TaskManager ref="taskManagerRef" :session-id="sessionStore.currentSessionId || ''" />
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, computed, onMounted, watch } from 'vue'
-import { ElMessage } from 'element-plus'
-import { Document, List, Download, DataBoard } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Document, List, Download, DataBoard, Loading } from '@element-plus/icons-vue'
 
 import { useChatStore } from '../store/chatStore'
 import { useSessionStore } from '../store'
@@ -152,6 +203,10 @@ import ChatPanel from '../components/bi/ChatPanel.vue'
 import WorkspacePanel from '../components/bi/WorkspacePanel.vue'
 import ExecutionProcessPanel from '../components/bi/ExecutionProcessPanel.vue'
 import DatabaseConnection from '../components/DatabaseConnection.vue'
+import DataCleanPanel from '../components/bi/DataCleanPanel.vue'
+import AuditPanel from '../components/bi/AuditPanel.vue'
+import DataSourceManager from '../components/bi/DataSourceManager.vue'
+import TaskManager from '../components/bi/TaskManager.vue'
 
 import { sessionService, uploadService, databaseService } from '../api/services'
 
@@ -159,6 +214,13 @@ const chatStore = useChatStore()
 const sessionStore = useSessionStore()
 
 const showProcessPanel = ref(false)
+const showCleanPanel = ref(false)
+const showInsightsDialog = ref(false)
+const showAuditDialog = ref(false)
+const showDatasourceDialog = ref(false)
+const showTaskDialog = ref(false)
+const insightsLoading = ref(false)
+const insightsList = ref([])
 const showDatabaseConnectionDialog = ref(false)
 const currentModel = ref('ali-qwen')
 const modelList = ref([
@@ -179,6 +241,9 @@ let currentDatabaseConnectionId = null
 
 const chatPanelRef = ref(null)
 const workspacePanelRef = ref(null)
+const dataCleanPanelRef = ref(null)
+const auditPanelRef = ref(null)
+const taskManagerRef = ref(null)
 
 const currentFileName = computed(() => sessionStore.fileName)
 
@@ -203,6 +268,7 @@ function saveSessionState() {
       activeWorkspaceTab: activeWorkspaceTab.value,
       timestamp: Date.now()
     }))
+    sessionStore.saveSessionMessages(sid, messages.value)
   } catch (e) {
     console.warn('保存会话状态失败:', e)
   }
@@ -903,11 +969,70 @@ const handleNewSession = () => {
   workspaceTabs.value = []
   activeWorkspaceTab.value = ''
   executionProcessLog.value = []
-  
   sessionStore.clearSession()
   sessionStore.currentSessionId = null
-  
   ElMessage.success('已创建新会话')
+}
+
+const handleCleanCompleted = (result) => {
+  if (result && result.preview) {
+    const existingTableTab = workspaceTabs.value.find(t => t.type === 'table')
+    if (existingTableTab) {
+      existingTableTab.data = result.preview
+      activeWorkspaceTab.value = existingTableTab.id
+    } else {
+      const tabId = `clean-${Date.now()}`
+      workspaceTabs.value.push({ id: tabId, title: '清洗后数据', type: 'table', data: result.preview })
+      activeWorkspaceTab.value = tabId
+    }
+    sessionStore.previewData = result.preview
+    if (result.columns) sessionStore.columns = result.columns
+    messages.value.push({ role: 'ai', type: 'text', content: `数据清洗完成，当前数据 ${result.rowCountAfter} 行` })
+  }
+}
+
+const handleGenerateInsights = async () => {
+  if (!sessionStore.currentSessionId) { ElMessage.warning('请先选择一个会话'); return }
+  showInsightsDialog.value = true
+  insightsLoading.value = true
+  insightsList.value = []
+  try {
+    const res = await sessionService.getInsights(sessionStore.currentSessionId, currentModel.value)
+    if (res.status === 'ok' && res.insights && res.insights.length > 0) {
+      insightsList.value = res.insights
+      ElMessage.success(`已生成 ${res.insights.length} 条智能洞察`)
+    } else {
+      insightsList.value = []
+      ElMessage.info('当前会话暂无足够数据生成洞察')
+    }
+  } catch (e) {
+    ElMessage.error('智能洞察生成失败')
+    insightsList.value = []
+  } finally { insightsLoading.value = false }
+}
+
+const handleToolCommand = (command) => {
+  if (command === 'audit') showAuditDialog.value = true
+  else if (command === 'datasource') showDatasourceDialog.value = true
+  else if (command === 'task') { showTaskDialog.value = true; if (taskManagerRef.value) taskManagerRef.value.loadTasks() }
+}
+
+const handleClearAllSessions = async () => {
+  try {
+    await ElMessageBox.confirm('确定要清空所有会话吗？此操作不可恢复。', '清空全部会话', { confirmButtonText: '确定清空', cancelButtonText: '取消', type: 'warning' })
+    await sessionService.clearAllSessions()
+    sessionStore.clearAllMessages()
+    handleNewSession()
+    ElMessage.success('已清空全部会话')
+  } catch (e) { if (e !== 'cancel') ElMessage.error('清空失败') }
+}
+
+const handlePreviewFile = async (file, callback) => {
+  try {
+    const res = await uploadService.previewFile(file)
+    res._file = file
+    callback(res)
+  } catch (e) { callback(null) }
 }
 
 const handleSessionSelect = async (session) => {
@@ -1180,16 +1305,22 @@ onMounted(() => {
           border-radius: 8px;
           padding: 10px 16px;
           transition: all 0.2s ease;
-          
-          &:hover {
-            background: rgba(255, 255, 255, 0.3);
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-          }
-          
-          &:active {
-            transform: translateY(0);
-          }
+          &:hover { background: rgba(255, 255, 255, 0.3); transform: translateY(-1px); }
+          &:active { transform: translateY(0); }
+        }
+        .clean-btn {
+          width: 110px; background: linear-gradient(135deg, #FA8C16, #FAAD14); border: none; color: #FFF; font-weight: 600; border-radius: 8px; padding: 10px 16px; transition: all 0.2s ease;
+          &:hover:not(:disabled) { background: linear-gradient(135deg, #D48806, #FA8C16); transform: translateY(-1px); }
+          &:disabled { opacity: 0.5; }
+        }
+        .insight-btn {
+          width: 110px; background: linear-gradient(135deg, #722ED1, #9254DE); border: none; color: #FFF; font-weight: 600; border-radius: 8px; padding: 10px 16px; transition: all 0.2s ease;
+          &:hover:not(:disabled) { background: linear-gradient(135deg, #531DAB, #722ED1); transform: translateY(-1px); }
+          &:disabled { opacity: 0.5; }
+        }
+        .more-tool-btn {
+          width: 120px; background: linear-gradient(135deg, #36CFC9, #00B42A); border: none; color: #FFF; font-weight: 600; border-radius: 8px; padding: 10px 16px; transition: all 0.2s ease;
+          &:hover { background: linear-gradient(135deg, #2AB8B4, #009D24); transform: translateY(-1px); }
         }
         
         .export-btn {
@@ -1293,14 +1424,17 @@ onMounted(() => {
   
   :deep(.process-drawer .el-drawer__header) {
     background: linear-gradient(90deg, #8B7DF2, #9E8FF5);
-    color: #FFFFFF;
-    margin-bottom: 0;
-    padding: 16px 24px;
+    color: #FFFFFF; margin-bottom: 0; padding: 16px 24px;
   }
-  
   :deep(.process-drawer .el-drawer__body) {
-    background: #F5F7FA;
-    padding: 16px;
+    background: #F5F7FA; padding: 16px;
+  }
+  :deep(.clean-drawer .el-drawer__header) {
+    background: linear-gradient(90deg, #FA8C16, #FAAD14);
+    color: #FFFFFF; margin-bottom: 0; padding: 16px 24px;
+  }
+  :deep(.clean-drawer .el-drawer__body) {
+    background: #F8F9FA; padding: 0;
   }
 }
 </style>

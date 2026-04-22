@@ -111,6 +111,14 @@ const sessionService = {
       params: { model_id: modelId },
       timeout: 60000
     });
+  },
+
+  getDataProfile: (sessionId) => {
+    return apiClient({
+      url: '/v1/session/data_profile',
+      method: 'get',
+      params: { session_id: sessionId }
+    });
   }
 };
 

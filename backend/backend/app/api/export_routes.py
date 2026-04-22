@@ -11,7 +11,7 @@ from app.core.session_manager import get_session, sessions
 from app.services.report_service import get_report_service, REPORTLAB_AVAILABLE
 from app.utils.llm_client import call_llm
 
-router = APIRouter(prefix="/api/sessions", tags=["sessions"])
+router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 
 class ExportPdfRequest(BaseModel):

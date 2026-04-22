@@ -16,6 +16,14 @@
               </svg>
               新建会话
             </el-button>
+            <el-button
+              v-if="sessionsList.length > 0"
+              size="default"
+              style="width:100%;height:32px;border:1px dashed #E5E6EB;color:#869099;font-size:12px;border-radius:8px;background:transparent;"
+              @click="$emit('clear-all-sessions')"
+            >
+              清空全部
+            </el-button>
           </div>
           
           <div v-if="!sessionsList.length" class="empty-state">
@@ -199,7 +207,7 @@ const props = defineProps({
   }
 })
 
-defineEmits(['connect-database', 'table-click', 'quick-connect', 'delete-connection', 'disconnect-database', 'new-session', 'session-select', 'session-delete'])
+defineEmits(['connect-database', 'table-click', 'quick-connect', 'delete-connection', 'disconnect-database', 'new-session', 'session-select', 'session-delete', 'clear-all-sessions'])
 
 const activeNames = ref(['sessions', 'database'])
 

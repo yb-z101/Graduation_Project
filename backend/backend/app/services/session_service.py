@@ -181,6 +181,43 @@ result = df
     }
 
 
+def get_data_profile(session_id: str) -> Dict[str, Any]:
+    import pandas as pd
+    import numpy as np
+    session_data = get_session(session_id)
+    if not session_data:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    df = session_data["dataframe"]
+    total_rows = len(df)
+    total_cols = len(df.columns)
+    null_counts = df.isnull().sum().to_dict()
+    null_percentages = {col: round(cnt / total_rows * 100, 2) if total_rows > 0 else 0 for col, cnt in null_counts.items()}
+    duplicate_count = int(df.duplicated().sum())
+    column_profiles = []
+    for col in df.columns:
+        col_info = {"name": col, "dtype": str(df[col].dtype), "null_count": int(null_counts.get(col, 0)), "null_percentage": null_percentages.get(col, 0), "unique_count": int(df[col].nunique())}
+        if pd.api.types.is_numeric_dtype(df[col]):
+            valid_series = df[col].dropna()
+            if len(valid_series) > 0:
+                col_info["min"] = float(valid_series.min()) if not pd.isna(valid_series.min()) else None
+                col_info["max"] = float(valid_series.max()) if not pd.isna(valid_series.max()) else None
+                col_info["mean"] = round(float(valid_series.mean()), 4) if not pd.isna(valid_series.mean()) else None
+                col_info["median"] = float(valid_series.median()) if not pd.isna(valid_series.median()) else None
+                col_info["std"] = round(float(valid_series.std()), 4) if len(valid_series) > 1 else None
+            else:
+                col_info.update({"min": None, "max": None, "mean": None, "median": None, "std": None})
+        else:
+            value_counts = df[col].value_counts().head(5)
+            col_info["top_values"] = [{str(k): int(v)} for k, v in value_counts.items()]
+        column_profiles.append(col_info)
+    overall_score = 100
+    if total_rows > 0:
+        total_null_ratio = sum(null_counts.values()) / (total_rows * total_cols) * 100
+        dup_ratio = duplicate_count / total_rows * 100
+        overall_score = max(0, round(100 - total_null_ratio - dup_ratio, 1))
+    return {"status": "ok", "session_id": session_id, "filename": session_data["filename"], "total_rows": total_rows, "total_columns": total_cols, "duplicate_rows": duplicate_count, "total_null_cells": int(sum(null_counts.values())), "overall_quality_score": overall_score, "column_profiles": column_profiles}
+
+
 async def send_message(session_id: str, message: str, model_id: str, db: Session) -> Dict[str, Any]:
     """发送消息并处理"""
     from app.utils.audit_logger import get_audit_logger

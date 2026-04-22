@@ -1,5 +1,27 @@
 import { defineStore } from 'pinia'
 
+const MSG_STORAGE_KEY = 'chat_session_messages'
+const MSG_TTL_MS = 24 * 60 * 60 * 1000
+
+function loadMessages() {
+  try {
+    const raw = localStorage.getItem(MSG_STORAGE_KEY)
+    if (!raw) return {}
+    const data = JSON.parse(raw)
+    const now = Date.now()
+    const cleaned = {}
+    for (const [sid, entry] of Object.entries(data)) {
+      if (now - (entry._ts || 0) < MSG_TTL_MS) { cleaned[sid] = entry }
+    }
+    if (Object.keys(cleaned).length !== Object.keys(data).length) {
+      localStorage.setItem(MSG_STORAGE_KEY, JSON.stringify(cleaned))
+    }
+    return cleaned
+  } catch { return {} }
+}
+
+function saveMessages(data) { localStorage.setItem(MSG_STORAGE_KEY, JSON.stringify(data)) }
+
 export const useSessionStore = defineStore('session', {
   state: () => ({
     sessionId: null,
@@ -8,7 +30,8 @@ export const useSessionStore = defineStore('session', {
     columns: [],
     currentSessionId: null,
     sessions: [],
-    sqlContent: null  // 新增：保存SQL文件内容
+    sqlContent: null,
+    _messagesMap: loadMessages()
   }),
   actions: {
     // 初始化时从 localStorage 加载会话
@@ -124,7 +147,24 @@ export const useSessionStore = defineStore('session', {
         this.currentSessionId = null
         this.clearSession()
       }
+      if (this._messagesMap[sessionId]) {
+        delete this._messagesMap[sessionId]
+        saveMessages(this._messagesMap)
+      }
       this.saveSessions()
+    },
+    saveSessionMessages(sessionId, messages) {
+      if (!sessionId) return
+      this._messagesMap[sessionId] = { _ts: Date.now(), messages: [...messages] }
+      saveMessages(this._messagesMap)
+    },
+    getSessionMessages(sessionId) {
+      const entry = this._messagesMap[sessionId]
+      return entry ? entry.messages : []
+    },
+    clearAllMessages() {
+      this._messagesMap = {}
+      localStorage.removeItem(MSG_STORAGE_KEY)
     }
   }
 })

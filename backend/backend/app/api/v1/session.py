@@ -9,6 +9,7 @@ from app.services.session_service import (
     delete_one_session,
     clear_all_sessions,
     clean_session_data,
+    get_data_profile,
     send_message,
     get_session_history
 )
@@ -38,6 +39,11 @@ def clear_all_sessions_endpoint(
 ):
     """清空全部会话（软删除数据库 + 清空内存）"""
     return clear_all_sessions(db)
+
+@router.get("/data_profile")
+def get_data_profile_endpoint(session_id: str):
+    return get_data_profile(session_id)
+
 
 @router.post("/clean")
 def clean_session_data_endpoint(
