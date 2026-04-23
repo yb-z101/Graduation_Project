@@ -38,10 +38,9 @@ async def export_session_pdf(session_id: str, request: ExportPdfRequest = None, 
         raise HTTPException(status_code=404, detail="会话不存在")
 
     try:
-        # 获取数据库中的消息记录
         db_messages = db.query(SessionMessage).filter(
             SessionMessage.session_id == session_id
-        ).order_by(SessionMessage.created_at).all()
+        ).order_by(SessionMessage.create_time).all()
 
         # 构建消息列表（只包含用户和AI的消息）
         messages = []
@@ -133,7 +132,7 @@ async def get_session_insights(session_id: str, model_id: str = "ali-qwen", db: 
 
         db_messages = db.query(SessionMessage).filter(
             SessionMessage.session_id == session_id
-        ).order_by(SessionMessage.created_at).all()
+        ).order_by(SessionMessage.create_time).all()
 
         conversation_summary = ""
         user_questions = []
@@ -173,15 +172,16 @@ async def get_session_insights(session_id: str, model_id: str = "ali-qwen", db: 
             return {"status": "ok", "insights": []}
 
         questions_str = "\n".join([f"- {q}" for q in user_questions]) if user_questions else "无"
-        prompt = f"""你是一个数据分析专家。基于以下用户查询、数据摘要和分析对话，请生成2-3条关键洞察或建议。
+        prompt = f"""你是一个资深数据分析顾问。基于以下数据摘要和用户对话，请生成3-5条有价值的智能洞察与建议。
 
 要求：
-1. 每条洞察必须引用具体的数据和数值
-2. 洞察应针对用户关心的问题，具有决策参考价值
-3. 示例格式：
-   - "张伟的数学成绩仅为45分，远低于班级平均分72分，需要重点关注"
-   - "市场部的平均薪资最低（5500元），低于公司平均水平（7800元）的30%"
-   - "产品A的销量虽高但利润率仅5%，而产品C销量低但利润率达35%，建议调整产品策略"
+1. 每条必须引用具体的数据和数值，不能空泛
+2. 内容应涵盖：数据特征洞察、潜在风险提示、行动建议或趋势预测
+3. 语气专业但通俗，具有决策参考价值
+4. 示例格式：
+   - "销售数据中，华东区占比42%远超其他区域，建议关注区域均衡发展，避免过度依赖单一市场"
+   - "客户流失率从Q1的5%上升至Q3的12%，呈加速趋势，建议立即启动客户挽留计划"
+   - "产品A利润率仅5%但销量占60%，而产品C利润率达35%却销量不足，建议优化产品结构"
 
 用户提出的问题：
 {questions_str}
@@ -192,7 +192,7 @@ async def get_session_insights(session_id: str, model_id: str = "ali-qwen", db: 
 对话记录摘要：
 {conversation_summary[:1500]}
 
-请直接输出洞察，每条一行，以"-"开头。"""
+请直接输出洞察与建议，每条一行，以"-"开头。"""
 
         result = call_llm(model_id, prompt)
 

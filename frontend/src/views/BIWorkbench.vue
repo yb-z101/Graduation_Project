@@ -51,9 +51,6 @@
           <el-button type="primary" size="default" class="clean-btn" @click="showCleanPanel = !showCleanPanel" :disabled="!sessionStore.currentSessionId">
             数据清洗
           </el-button>
-          <el-button type="primary" size="default" class="insight-btn" @click="handleGenerateInsights" :loading="insightsLoading" :disabled="!sessionStore.currentSessionId">
-            智能洞察
-          </el-button>
           <el-dropdown trigger="click" @command="handleToolCommand" class="tool-dropdown">
             <el-button type="primary" size="default" class="more-tool-btn">更多工具 ▾</el-button>
             <template #dropdown>
@@ -159,23 +156,6 @@
       <DataCleanPanel ref="dataCleanPanelRef" :session-id="sessionStore.currentSessionId || ''" @clean-completed="handleCleanCompleted" />
     </el-drawer>
 
-    <el-dialog v-model="showInsightsDialog" title="智能洞察" width="560px">
-      <div v-if="insightsLoading" style="display:flex;flex-direction:column;align-items:center;gap:16px;padding:60px 20px;color:#869099;">
-        <el-icon class="is-loading" :size="32"><Loading /></el-icon>
-        <p>正在分析数据，生成智能洞察...</p>
-      </div>
-      <div v-else-if="insightsList.length > 0" style="padding:16px 0;">
-        <div v-for="(insight, idx) in insightsList" :key="idx" style="display:flex;align-items:flex-start;gap:14px;padding:14px 18px;background:#FFF;border-radius:10px;border:1px solid #E8E3FF;margin-bottom:10px;">
-          <span style="width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,#722ED1,#9254DE);color:#FFF;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">{{ idx + 1 }}</span>
-          <span style="font-size:14px;line-height:1.7;color:#1D2129;">{{ insight }}</span>
-        </div>
-      </div>
-      <div v-else style="text-align:center;padding:50px 20px;color:#869099;">
-        <p>暂无洞察结果</p>
-        <p style="font-size:13px;">请先上传数据并发起分析对话</p>
-      </div>
-    </el-dialog>
-
     <el-dialog v-model="showAuditDialog" title="审计日志" width="780px">
       <AuditPanel ref="auditPanelRef" />
     </el-dialog>
@@ -215,12 +195,9 @@ const sessionStore = useSessionStore()
 
 const showProcessPanel = ref(false)
 const showCleanPanel = ref(false)
-const showInsightsDialog = ref(false)
 const showAuditDialog = ref(false)
 const showDatasourceDialog = ref(false)
 const showTaskDialog = ref(false)
-const insightsLoading = ref(false)
-const insightsList = ref([])
 const showDatabaseConnectionDialog = ref(false)
 const currentModel = ref('ali-qwen')
 const modelList = ref([
@@ -810,56 +787,8 @@ const handleExportReport = async () => {
     htmlContent += `</div>`
   }
 
-  // 智能洞察
-  try {
-    const insightsRes = await sessionService.getInsights(sessionStore.currentSessionId, currentModel.value)
-    if (insightsRes.status === 'ok' && insightsRes.insights && insightsRes.insights.length > 0) {
-      htmlContent += `
-        <div class="section">
-            <div class="section-title">💡 智能洞察</div>
-            <ul style="padding-left: 20px; line-height: 2;">
-      `
-      insightsRes.insights.forEach(insight => {
-        htmlContent += `<li style="margin-bottom: 8px; color: #1D2129;">${insight.replace(/\n/g, '<br>')}</li>`
-      })
-      htmlContent += `</ul></div>`
-    }
-  } catch (e) {
-    console.warn('获取智能洞察失败:', e)
-  }
-
-  // AI决策建议
-  try {
-    const decisionRes = await taskService.getDecision(sessionStore.currentSessionId)
-    if (decisionRes.status === 'ok' && decisionRes.data) {
-      const decisionData = decisionRes.data
-      htmlContent += `
-        <div class="section">
-            <div class="section-title">🤖 AI决策建议</div>
-      `
-      if (decisionData.summary) {
-        htmlContent += `<p style="margin-bottom:12px;color:#4E5969;">${decisionData.summary}</p>`
-      }
-      if (decisionData.sections && decisionData.sections.length > 0) {
-        decisionData.sections.forEach(sec => {
-          const iconMap = { finding: '📊', warning: '⚠️', suggestion: '💡' }
-          const icon = iconMap[sec.type] || '📌'
-          htmlContent += `
-            <div style="margin-bottom:14px;padding:14px 18px;background:#F9F0FF;border-radius:8px;border-left:4px solid #6B5CE8;">
-              <h4 style="margin-bottom:8px;color:#6B5CE8;">${icon} ${sec.title || ''}</h4>
-              <div style="font-size:14px;line-height:1.8;color:#1D2129;white-space:pre-wrap;">${(sec.content || '').replace(/\n/g, '<br>')}</div>
-            </div>
-          `
-        })
-      }
-      if (decisionData.confidence_score != null) {
-        htmlContent += `<p style="text-align:right;color:#869099;font-size:12px;">置信度：${(decisionData.confidence_score * 100).toFixed(0)}%</p>`
-      }
-      htmlContent += `</div>`
-    }
-  } catch (e) {
-    console.warn('获取AI决策建议失败:', e)
-  }
+  // 智能洞察（旧版，移除）
+  // AI决策建议（旧版，移除）
 
   // SQL语句
   const sqlMessages = messages.value.filter(m => m.type === 'code' && m.language === 'sql')
@@ -975,6 +904,29 @@ const handleExportReport = async () => {
     htmlContent += `</scr` + `ipt>`
   }
 
+  // AI智能建议（合并洞察+决策，在图表之后）
+  try {
+    const insightsRes = await sessionService.getInsights(sessionStore.currentSessionId, currentModel.value)
+    if (insightsRes.status === 'ok' && insightsRes.insights && insightsRes.insights.length > 0) {
+      htmlContent += `
+        <div class="section">
+            <div class="section-title">🤖 AI智能建议</div>
+            <p style="margin-bottom:16px;color:#869099;font-size:13px;">基于数据特征与对话分析，AI为您提供以下洞察与建议：</p>
+      `
+      insightsRes.insights.forEach((insight, idx) => {
+        htmlContent += `
+            <div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:14px;padding:16px 20px;background:#F9F0FF;border-radius:10px;border:1px solid #E8E3FF;transition:all 0.2s ease;">
+              <span style="width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#722ED1,#9254DE);color:#FFF;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${idx + 1}</span>
+              <span style="font-size:14px;line-height:1.8;color:#1D2129;">${insight.replace(/\n/g, '<br>')}</span>
+            </div>
+        `
+      })
+      htmlContent += `</div>`
+    }
+  } catch (e) {
+    console.warn('获取AI智能建议失败:', e)
+  }
+
   htmlContent += `
         <div class="footer">
             <p>本报告由 智析（Intelligent Data Analysis）自动生成</p>
@@ -1023,26 +975,6 @@ const handleCleanCompleted = (result) => {
     if (result.columns) sessionStore.columns = result.columns
     messages.value.push({ role: 'ai', type: 'text', content: `数据清洗完成，当前数据 ${result.rowCountAfter} 行` })
   }
-}
-
-const handleGenerateInsights = async () => {
-  if (!sessionStore.currentSessionId) { ElMessage.warning('请先选择一个会话'); return }
-  showInsightsDialog.value = true
-  insightsLoading.value = true
-  insightsList.value = []
-  try {
-    const res = await sessionService.getInsights(sessionStore.currentSessionId, currentModel.value)
-    if (res.status === 'ok' && res.insights && res.insights.length > 0) {
-      insightsList.value = res.insights
-      ElMessage.success(`已生成 ${res.insights.length} 条智能洞察`)
-    } else {
-      insightsList.value = []
-      ElMessage.info('当前会话暂无足够数据生成洞察')
-    }
-  } catch (e) {
-    ElMessage.error('智能洞察生成失败')
-    insightsList.value = []
-  } finally { insightsLoading.value = false }
 }
 
 const handleToolCommand = (command) => {
@@ -1363,11 +1295,6 @@ onMounted(() => {
         .clean-btn {
           width: 110px; background: linear-gradient(135deg, #FA8C16, #FAAD14); border: none; color: #FFF; font-weight: 600; border-radius: 8px; padding: 10px 16px; transition: all 0.2s ease;
           &:hover:not(:disabled) { background: linear-gradient(135deg, #D48806, #FA8C16); transform: translateY(-1px); }
-          &:disabled { opacity: 0.5; }
-        }
-        .insight-btn {
-          width: 110px; background: linear-gradient(135deg, #722ED1, #9254DE); border: none; color: #FFF; font-weight: 600; border-radius: 8px; padding: 10px 16px; transition: all 0.2s ease;
-          &:hover:not(:disabled) { background: linear-gradient(135deg, #531DAB, #722ED1); transform: translateY(-1px); }
           &:disabled { opacity: 0.5; }
         }
         .more-tool-btn {
