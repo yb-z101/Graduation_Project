@@ -15,18 +15,24 @@ from app.repositories.session_repository import SessionRepository
 
 
 def parse_csv_excel_from_bytes(content: bytes, filename: str) -> pd.DataFrame:
-    """解析 CSV 或 Excel 文件内容（bytes）"""
     ext = os.path.splitext(filename)[1].lower()
     if ext == '.csv':
-        try:
-            return pd.read_csv(io.BytesIO(content), encoding='utf-8-sig')
-        except UnicodeDecodeError:
+        encodings = ['utf-8-sig', 'gbk', 'gb2312', 'latin-1']
+        last_err = None
+        for enc in encodings:
             try:
-                return pd.read_csv(io.BytesIO(content), encoding='gbk')
-            except UnicodeDecodeError:
-                return pd.read_csv(io.BytesIO(content), encoding='utf-8')
+                df = pd.read_csv(io.BytesIO(content), encoding=enc, on_bad_lines='warn')
+                return df
+            except (UnicodeDecodeError, pd.errors.ParserError) as e:
+                last_err = e
+                continue
+        raise ValueError(f"CSV 文件解析失败，尝试了多种编码均无效：{last_err}")
     elif ext in ['.xlsx', '.xls']:
-        return pd.read_excel(io.BytesIO(content))
+        try:
+            df = pd.read_excel(io.BytesIO(content))
+            return df
+        except Exception as e:
+            raise ValueError(f"Excel 文件解析失败：{e}")
     else:
         raise ValueError("不支持的文件格式，请上传 CSV 或 Excel 文件")
 
@@ -207,13 +213,20 @@ def execute_sql_file(content: str, filename: str) -> Dict[str, Any]:
 
 
 def df_to_serializable_dict(df, n=5):
-    """将DataFrame转换为可JSON序列化的字典"""
     import decimal
+    import math
     from datetime import date, datetime
     
     def convert_value(val):
-        if pd.isna(val):
-            return None
+        try:
+            if val is pd.NA:
+                return None
+            if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
+                return None
+            if pd.isna(val):
+                return None
+        except (TypeError, ValueError):
+            pass
         if isinstance(val, decimal.Decimal):
             return float(val)
         if isinstance(val, (date, datetime)):

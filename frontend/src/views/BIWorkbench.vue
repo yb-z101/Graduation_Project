@@ -208,7 +208,7 @@ import AuditPanel from '../components/bi/AuditPanel.vue'
 import DataSourceManager from '../components/bi/DataSourceManager.vue'
 import TaskManager from '../components/bi/TaskManager.vue'
 
-import { sessionService, uploadService, databaseService } from '../api/services'
+import { sessionService, uploadService, databaseService, taskService } from '../api/services'
 
 const chatStore = useChatStore()
 const sessionStore = useSessionStore()
@@ -506,7 +506,8 @@ const handleFileUpload = async (file) => {
       }
     }
   } catch (error) {
-    ElMessage.error('文件上传失败')
+    const detail = error?.response?.data?.detail || error?.message || '未知错误'
+    ElMessage.error(`文件上传失败：${detail}`)
   }
 }
 
@@ -827,6 +828,39 @@ const handleExportReport = async () => {
     console.warn('获取智能洞察失败:', e)
   }
 
+  // AI决策建议
+  try {
+    const decisionRes = await taskService.getDecision(sessionStore.currentSessionId)
+    if (decisionRes.status === 'ok' && decisionRes.data) {
+      const decisionData = decisionRes.data
+      htmlContent += `
+        <div class="section">
+            <div class="section-title">🤖 AI决策建议</div>
+      `
+      if (decisionData.summary) {
+        htmlContent += `<p style="margin-bottom:12px;color:#4E5969;">${decisionData.summary}</p>`
+      }
+      if (decisionData.sections && decisionData.sections.length > 0) {
+        decisionData.sections.forEach(sec => {
+          const iconMap = { finding: '📊', warning: '⚠️', suggestion: '💡' }
+          const icon = iconMap[sec.type] || '📌'
+          htmlContent += `
+            <div style="margin-bottom:14px;padding:14px 18px;background:#F9F0FF;border-radius:8px;border-left:4px solid #6B5CE8;">
+              <h4 style="margin-bottom:8px;color:#6B5CE8;">${icon} ${sec.title || ''}</h4>
+              <div style="font-size:14px;line-height:1.8;color:#1D2129;white-space:pre-wrap;">${(sec.content || '').replace(/\n/g, '<br>')}</div>
+            </div>
+          `
+        })
+      }
+      if (decisionData.confidence_score != null) {
+        htmlContent += `<p style="text-align:right;color:#869099;font-size:12px;">置信度：${(decisionData.confidence_score * 100).toFixed(0)}%</p>`
+      }
+      htmlContent += `</div>`
+    }
+  } catch (e) {
+    console.warn('获取AI决策建议失败:', e)
+  }
+
   // SQL语句
   const sqlMessages = messages.value.filter(m => m.type === 'code' && m.language === 'sql')
   if (sqlMessages.length > 0) {
@@ -1020,7 +1054,12 @@ const handleToolCommand = (command) => {
 const handleClearAllSessions = async () => {
   try {
     await ElMessageBox.confirm('确定要清空所有会话吗？此操作不可恢复。', '清空全部会话', { confirmButtonText: '确定清空', cancelButtonText: '取消', type: 'warning' })
-    await sessionService.clearAllSessions()
+    try {
+      await sessionService.clearAllSessions()
+    } catch (apiErr) {
+      console.warn('后端清空会话API失败，仍清理前端状态:', apiErr)
+    }
+    sessionStore.clearAllSessions()
     sessionStore.clearAllMessages()
     handleNewSession()
     ElMessage.success('已清空全部会话')
@@ -1146,7 +1185,11 @@ const handleSessionSelect = async (session) => {
 
 const handleSessionDelete = async (sessionId) => {
   try {
-    await sessionService.deleteSession(sessionId)
+    try {
+      await sessionService.deleteSession(sessionId)
+    } catch (apiErr) {
+      console.warn('后端删除会话API失败，仍清理前端状态:', apiErr)
+    }
     sessionStore.deleteSession(sessionId)
     
     if (sessionStore.currentSessionId === sessionId) {
@@ -1259,39 +1302,48 @@ onMounted(() => {
         gap: 16px;
         
         .model-select {
-          width: 200px;
+          width: 210px;
           
           :deep(.el-input__wrapper) {
-            background: rgba(255, 255, 255, 0.15);
-            box-shadow: none;
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            border-radius: 8px;
-            padding: 8px 12px;
-            transition: all 0.2s ease;
+            background: linear-gradient(135deg, #722ED1, #9254DE) !important;
+            box-shadow: 0 2px 10px rgba(114, 46, 209, 0.35) !important;
+            border: none !important;
+            border-radius: 10px !important;
+            padding: 8px 14px !important;
+            transition: all 0.25s ease !important;
             
             &:hover {
-              background: rgba(255, 255, 255, 0.3);
-              box-shadow: 0 2px 8px rgba(255, 255, 255, 0.1);
+              background: linear-gradient(135deg, #531DAB, #722ED1) !important;
+              box-shadow: 0 4px 16px rgba(114, 46, 209, 0.5) !important;
+              transform: translateY(-1px);
             }
             
             &.is-focus {
-              background: rgba(255, 255, 255, 0.35);
-              box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.2);
+              background: linear-gradient(135deg, #531DAB, #722ED1) !important;
+              box-shadow: 0 4px 18px rgba(114, 46, 209, 0.55) !important;
             }
           }
           
           :deep(.el-input__inner) {
-            color: #FFFFFF;
-            font-weight: 500;
+            color: #FFFFFF !important;
+            font-weight: 600;
+            text-align: center;
+            font-size: 14px;
             
             &::placeholder {
-              color: rgba(255, 255, 255, 0.75);
+              color: rgba(255, 255, 255, 0.8);
             }
+          }
+          
+          :deep(.el-input__prefix) {
+            display: flex;
+            align-items: center;
           }
           
           :deep(.el-input__suffix) {
             .el-select__caret {
-              color: #FFFFFF;
+              color: rgba(255, 255, 255, 0.9) !important;
+              font-size: 14px;
             }
           }
         }
@@ -1435,6 +1487,55 @@ onMounted(() => {
   }
   :deep(.clean-drawer .el-drawer__body) {
     background: #F8F9FA; padding: 0;
+  }
+}
+</style>
+
+<style lang="less">
+.model-dropdown {
+  background: linear-gradient(135deg, #F9F0FF 0%, #EDE3FF 100%) !important;
+  border: 1px solid rgba(107, 92, 232, 0.2) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 8px 24px rgba(107, 92, 232, 0.2) !important;
+  padding: 6px !important;
+  overflow: hidden;
+
+  .el-scrollbar {
+    .el-select-dropdown__list {
+      padding: 0 !important;
+    }
+  }
+
+  .el-select-dropdown__item {
+    text-align: center !important;
+    font-weight: 500 !important;
+    font-size: 14px !important;
+    color: #4E5969 !important;
+    border-radius: 8px !important;
+    padding: 10px 16px !important;
+    margin: 2px 0 !important;
+    transition: all 0.2s ease !important;
+    justify-content: center !important;
+    display: flex !important;
+    align-items: center !important;
+
+    &:hover {
+      background: linear-gradient(135deg, rgba(107, 92, 232, 0.12), rgba(139, 125, 242, 0.12)) !important;
+      color: #6B5CE8 !important;
+    }
+
+    &.is-selected {
+      background: linear-gradient(135deg, #6B5CE8, #8B7DF2) !important;
+      color: #FFFFFF !important;
+      font-weight: 600 !important;
+    }
+  }
+
+  .el-popper__arrow {
+    &::before {
+      background: linear-gradient(135deg, #F9F0FF, #EDE3FF) !important;
+      border-color: rgba(107, 92, 232, 0.2) !important;
+    }
   }
 }
 </style>
