@@ -625,6 +625,9 @@ def process_query(state: typing_state) -> typing_state:
             last_result = state.get("last_result")
             last_columns = state.get("last_result_columns", [])
             
+            _use_context = bool(last_result and last_columns)
+            print(f"[CONTEXT-DEBUG] 代码生成: user_query='{state.get('user_query', '')[:30]}...' | has_last_result={_use_context} | rows={len(last_result) if last_result else 0} | cols={last_columns}")
+            
             # 使用带上下文的代码生成（当有历史结果时）
             if last_result and last_columns:
                 code = generate_pandas_code_with_context(
@@ -656,11 +659,16 @@ def process_query(state: typing_state) -> typing_state:
             state['analysis_result'] = result
             
             # 持久化本次结果供下次对话使用
-            try:
-                state['last_result'] = result.to_dict('records')
-                state['last_result_columns'] = result.columns.tolist() if hasattr(result, 'columns') else []
-            except Exception:
-                pass
+            # 注意：只有当result不是原始全量数据回退时才更新last_result，避免上下文断裂
+            is_fallback = (result is original_data) or (len(result) >= len(original_data) * 0.9)
+            if not is_fallback:
+                try:
+                    state['last_result'] = result.to_dict('records')
+                    state['last_result_columns'] = result.columns.tolist() if hasattr(result, 'columns') else []
+                except Exception:
+                    pass
+            else:
+                print(f"[CONTEXT] 本次结果为全量数据回退（{len(result)}行），保留原有last_result不变")
 
             # 生成文本分析结果
             analysis_summary = ""

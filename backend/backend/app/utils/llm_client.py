@@ -278,14 +278,28 @@ def generate_pandas_code_with_context(df_info: dict, user_query: str, history: l
         for row in last_result[:5]:
             preview_lines.append(str(dict(zip(last_columns, [row.get(c, '') for c in last_columns]))))
         context_hint = f"""
-【重要 - 上一次分析结果可用】
-用户之前的分析产生了一个中间结果，已存储在变量 `last_result` 中（pandas DataFrame）。
+【⚠️ 重要 - 上一次分析结果（必须优先使用）】
+
+用户上一次的分析结果已存储在变量 `last_result` 中（pandas DataFrame，{len(last_result)}行）。
 该结果的列：{', '.join(last_columns)}
-数据预览（前5行）：
+数据预览：
 {chr(10).join(preview_lines)}
 
-如果当前问题需要基于之前的结果继续分析（如"根据上面的结果画图"、"进一步筛选"、"排序"等），请直接使用 `last_result` 变量作为数据源。
-如果当前问题是全新的独立分析（如"计算XX"、"统计YY"），请忽略 `last_result`，使用原始 `df` 变量。
+【判断规则 - 必须严格遵守】
+当用户的问题包含以下任一特征时，**必须使用 `last_result` 作为数据源，禁止使用原始 df**：
+  - "这几类"、"这些"、"上面/前述的结果"、"根据...条件"
+  - "基于上次/之前/上述的..."
+  - "继续"、"进一步"、"接着"
+  - "排序"、"展示它们的"、"画图/可视化"（且上下文有前置筛选）
+  - 用户明显在延续上一轮话题
+
+只有当用户提出完全全新的独立分析需求时（如全新统计、全新计算），才使用原始 `df`。
+
+【代码模板参考】
+若需基于last_result操作：
+  result = last_result.sort_values('列名', ascending=False)  # 排序
+  result = last_result[['列1', '列2']]  # 选列
+  result = last_result[last_result['列'] > 值]  # 筛选
 """
 
     prompt = f"""

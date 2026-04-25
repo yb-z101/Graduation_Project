@@ -258,6 +258,10 @@ async def send_message(session_id: str, message: str, model_id: str, db: Session
         "last_result": session_data.get("last_result"),
         "last_result_columns": session_data.get("last_result_columns", [])
     }
+    
+    _lr = state.get("last_result")
+    _lrc = state.get("last_result_columns")
+    print(f"[CONTEXT-DEBUG] 消息接收: '{message[:40]}...' | last_result: {'有' + str(len(_lr)) + '行' if _lr else '无'} | last_result_columns: {_lrc}")
 
     # 执行工作流
     result = await analysis_workflow.ainvoke(state)
@@ -267,8 +271,10 @@ async def send_message(session_id: str, message: str, model_id: str, db: Session
         session_data["history"] = []
     session_data["history"] = result.get("history", [])
     if result.get("analysis_result") is not None:
-        session_data["last_result"] = result.get("last_result", result.get("analysis_result").to_dict(orient="records"))
+        _new_lr = result.get("last_result")
+        session_data["last_result"] = _new_lr if _new_lr else result.get("analysis_result").to_dict(orient="records")
         session_data["last_result_columns"] = result.get("last_result_columns", list(result.get("analysis_result").columns) if hasattr(result.get("analysis_result"), "columns") else [])
+        print(f"[CONTEXT-DEBUG] 结果保存: last_result={'有' + str(len(session_data['last_result'])) + '行' if session_data.get('last_result') else '无'} | columns={session_data.get('last_result_columns')}")
 
     # 保存聊天记录
     # 创建分析任务
