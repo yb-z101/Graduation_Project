@@ -221,16 +221,20 @@ def generate_pandas_code(df_info: dict, user_query: str, history: list = None, m
     history: 格式为 [{"role": "user/assistant", "content": "消息", ...}]
     """
     col_desc = "\n".join([f"- {c['name']} ({c['type']})" for c in df_info['columns']])
+    total_rows = df_info.get('total_rows', 0)
     sample_rows = df_info.get('sample_rows', [])
-    sample_desc = "示例数据前3行：\n" + "\n".join([str(row) for row in sample_rows]) if sample_rows else "无示例数据"
+    sample_desc = f"数据总行数：{total_rows}\n示例数据（仅展示部分行，实际数据远多于此）：\n" + "\n".join([str(row) for row in sample_rows]) if sample_rows else "无示例数据"
 
     history_text = ""
     if history:
-        recent = history[-3:]
+        recent = history[-5:]
         history_lines = []
         for h in recent:
-            prefix = "用户" if h['role'] == 'user' else "助手"
-            history_lines.append(f"{prefix}: {h['content']}")
+            prefix = "用户" if h.get('role') == 'user' else "助手"
+            content = h.get('content', '')
+            if len(content) > 300:
+                content = content[:300] + "..."
+            history_lines.append(f"{prefix}: {content}")
         if history_lines:
             history_text = "历史对话：\n" + "\n".join(history_lines) + "\n\n"
 
@@ -248,6 +252,7 @@ def generate_pandas_code(df_info: dict, user_query: str, history: list = None, m
 2. 仅使用pandas和Python内置函数，不要导入其他模块。
 3. 代码应简洁高效，只包含必要的操作。
 4. 不要包含任何解释性文字，只返回纯Python代码。
+5. 【严禁心算】你必须写pandas代码让计算机执行计算，绝对不能手动枚举数据行或心算结果。示例数据只是列结构的参考，实际数据量远大于示例。
 """
     code = call_llm(model_id, prompt)
     return clean_code_output(code)
@@ -256,8 +261,9 @@ def generate_pandas_code_with_context(df_info: dict, user_query: str, history: l
                                        model_id: str = "ali-qwen",
                                        last_result=None, last_columns=None) -> str:
     col_desc = "\n".join([f"- {c['name']} ({c['type']})" for c in df_info['columns']])
+    total_rows = df_info.get('total_rows', 0)
     sample_rows = df_info.get('sample_rows', [])
-    sample_desc = "示例数据前3行：\n" + "\n".join([str(row) for row in sample_rows]) if sample_rows else "无示例数据"
+    sample_desc = f"数据总行数：{total_rows}\n示例数据（仅展示部分行，实际数据远多于此）：\n" + "\n".join([str(row) for row in sample_rows]) if sample_rows else "无示例数据"
 
     history_text = ""
     if history:
@@ -318,6 +324,7 @@ def generate_pandas_code_with_context(df_info: dict, user_query: str, history: l
 3. 仅使用pandas和Python内置函数，不要导入其他模块。
 4. 代码应简洁高效，只包含必要的操作。
 5. 不要包含任何解释性文字，只返回纯Python代码。
+6. 【严禁心算】你必须写pandas代码让计算机执行计算，绝对不能手动枚举数据行或心算结果。示例数据只是列结构的参考，实际数据量远大于示例。
 """
     code = call_llm(model_id, prompt)
     return clean_code_output(code)

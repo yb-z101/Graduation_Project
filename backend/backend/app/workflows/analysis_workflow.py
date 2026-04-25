@@ -618,7 +618,8 @@ def process_query(state: typing_state) -> typing_state:
             # 生成分析代码
             df_info = {
                 'columns': state.get('columns', []),
-                'sample_rows': original_data.head(3).to_dict('records')
+                'sample_rows': original_data.head(20).to_dict('records'),
+                'total_rows': len(original_data)
             }
             
             # 获取上一次的计算结果（用于上下文连续性）
@@ -854,11 +855,54 @@ def process_query(state: typing_state) -> typing_state:
 def generate_visualization(state: typing_state) -> typing_state:
     """生成可视化图表"""
     try:
-        # 只有当用户明确请求生成图表时，才生成图表
         user_query = state.get('user_query', '') or ''
-        wants_chart = any(k in user_query for k in ["生成图表", "画图", "可视化", "折线图", "柱状图", "饼图"])
-        if state.get('analysis_result') is not None and wants_chart:
-            state['chart_option'] = generate_chart_config(state.get('analysis_result'), state.get('user_query', ''))
+        chart_keywords = ["图表", "画图", "可视化", "折线图", "柱状图", "饼图", "组合图", "散点图", "条形图", "面积图", "雷达图"]
+        wants_chart = any(k in user_query for k in chart_keywords)
+        
+        # 优先使用display_result（智能筛选后的数据），而非analysis_result
+        chart_data = state.get('analysis_result')
+        display_result = state.get('display_result')
+        display_columns = state.get('display_columns', [])
+        if display_result and display_columns:
+            try:
+                import pandas as pd
+                chart_data = pd.DataFrame(display_result, columns=display_columns)
+            except Exception:
+                pass
+        
+        if chart_data is not None and wants_chart:
+            state['chart_option'] = generate_chart_config(chart_data, user_query)
+            
+            # 探究性问题：出图后追加文字分析结论
+            exploratory_keywords = ["看看是不是", "分析一下", "结论", "是否", "有没有", "关系", "趋势", "规律", "帮我看看", "判断", "比较"]
+            is_exploratory = any(k in user_query for k in exploratory_keywords)
+            
+            if is_exploratory:
+                try:
+                    data_summary = ""
+                    if display_result and display_columns:
+                        data_summary = f"数据列：{', '.join(display_columns)}\n数据行数：{len(display_result)}\n前5行：{str(display_result[:5])}"
+                    elif state.get('analysis_result') is not None:
+                        ar = state['analysis_result']
+                        data_summary = f"数据列：{', '.join(ar.columns.tolist())}\n数据行数：{len(ar)}\n前5行：{ar.head(5).to_dict('records')}"
+                    
+                    analysis_prompt = f"""用户的问题：{user_query}
+
+基于以下分析数据结果，请用200字左右的中文给出明确的结论和业务洞察。要求：
+1. 必须引用具体的数据和数值
+2. 直接回答用户的问题（如"是不是..."就回答"是/否，因为..."）
+3. 语言简洁专业，不要重复问题描述
+
+数据结果：
+{data_summary}
+"""
+                    chart_analysis = call_llm(state.get('model_id', 'ali-qwen'), analysis_prompt)
+                    if chart_analysis:
+                        existing_summary = state.get('analysis_summary', '')
+                        state['analysis_summary'] = existing_summary + "\n\n📊 **图表分析结论**：\n" + chart_analysis if existing_summary else "📊 **图表分析结论**：\n" + chart_analysis
+                        print(f"[CHART-ANALYSIS] 已生成图表分析结论: {chart_analysis[:80]}...")
+                except Exception as e:
+                    print(f"[CHART-ANALYSIS] 生成图表分析结论失败: {e}")
     except Exception as e:
         state['error'] = f"生成图表失败: {str(e)}"
     return state
