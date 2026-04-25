@@ -412,9 +412,12 @@ const handleSendMessage = async (text) => {
         else if (response.display_result && response.display_result.length > 0) {
           upsertTab('分析结果', 'table', response.display_result)
         }
-        else if (response.result) {
-          let title = response.current_table_name || '分析结果'
-          upsertTab(title, 'table', response.result)
+        else if (response.result && response.result.length > 0) {
+          const isFullDataFallback = response.total_rows && response.result.length >= response.total_rows * 0.9
+          if (!isFullDataFallback) {
+            let title = response.current_table_name || '分析结果'
+            upsertTab(title, 'table', response.result)
+          }
         }
         
         if (response.chart_option) {

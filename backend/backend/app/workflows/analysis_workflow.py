@@ -871,6 +871,25 @@ def generate_visualization(state: typing_state) -> typing_state:
                 pass
         
         if chart_data is not None and wants_chart:
+            # 兜底：如果chart_data是原始全量数据，尝试用last_result画图
+            original_data = state.get('data')
+            is_chart_full_fallback = False
+            if original_data is not None:
+                try:
+                    is_chart_full_fallback = len(chart_data) >= len(original_data) * 0.9
+                except Exception:
+                    pass
+
+            if is_chart_full_fallback:
+                lr = state.get('last_result')
+                lc = state.get('last_result_columns', [])
+                if lr and lc:
+                    try:
+                        chart_data = pd.DataFrame(lr, columns=lc)
+                        print(f"[CHART] 图表数据从全量回退切换为last_result: {len(chart_data)}行")
+                    except Exception:
+                        pass
+
             state['chart_option'] = generate_chart_config(chart_data, user_query)
             
             # 探究性问题：出图后追加文字分析结论

@@ -291,21 +291,19 @@ def generate_pandas_code_with_context(df_info: dict, user_query: str, history: l
 数据预览：
 {chr(10).join(preview_lines)}
 
-【判断规则 - 必须严格遵守】
-当用户的问题包含以下任一特征时，**必须使用 `last_result` 作为数据源，禁止使用原始 df**：
-  - "这几类"、"这些"、"上面/前述的结果"、"根据...条件"
-  - "基于上次/之前/上述的..."
-  - "继续"、"进一步"、"接着"
-  - "排序"、"展示它们的"、"画图/可视化"（且上下文有前置筛选）
-  - 用户明显在延续上一轮话题
+【强制规则 - 代码第一行必须遵循】
+当用户问题中出现以下任一关键词时，你的代码**第一行必须是 result = last_result.xxx(...)**，绝对不能写 result = df.xxx(...)：
+  - "取上一步"、"根据上面"、"基于刚才"、"之前的结果"
+  - "排名前N"、"前几名"、"筛选出"、"继续"
+  - "这几类"、"这些数据"、"它们的"
 
-只有当用户提出完全全新的独立分析需求时（如全新统计、全新计算），才使用原始 `df`。
+【代码模板（必须参考）】
+  result = last_result.head(N)              # 取前N行
+  result = last_result.sort_values('列名')   # 排序
+  result = last_result[['列1','列2']]        # 选列
+  result = last_result[last_result['列']>值] # 筛选
 
-【代码模板参考】
-若需基于last_result操作：
-  result = last_result.sort_values('列名', ascending=False)  # 排序
-  result = last_result[['列1', '列2']]  # 选列
-  result = last_result[last_result['列'] > 值]  # 筛选
+只有当用户提出完全全新的独立分析需求时，才使用原始 df 变量。
 """
 
     prompt = f"""
