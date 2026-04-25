@@ -6,7 +6,7 @@ import sys
 import re
 from typing import Tuple, Optional
 
-def execute_pandas_code(code: str, df: pd.DataFrame) -> pd.DataFrame:
+def execute_pandas_code(code: str, df: pd.DataFrame, extra_vars: dict = None) -> pd.DataFrame:
     """
     安全执行 pandas 代码，返回结果 DataFrame。
     限制：只允许 pandas、numpy 和内置函数，禁用危险操作。
@@ -39,7 +39,7 @@ def execute_pandas_code(code: str, df: pd.DataFrame) -> pd.DataFrame:
         'np': np,
         'df': df,
         '__builtins__': {
-            'print': print,  # 允许打印（可捕获输出）
+            'print': print,
             'len': len,
             'str': str,
             'int': int,
@@ -67,6 +67,13 @@ def execute_pandas_code(code: str, df: pd.DataFrame) -> pd.DataFrame:
             'set': set,
         }
     }
+
+    if extra_vars:
+        for key, val in extra_vars.items():
+            try:
+                safe_globals[key] = val
+            except Exception:
+                pass
 
     local_vars = {}
     try:

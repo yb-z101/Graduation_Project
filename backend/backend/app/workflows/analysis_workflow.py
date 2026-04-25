@@ -1,6 +1,6 @@
 from langgraph.graph import StateGraph, END
 from typing import Dict, Any, Optional
-from app.utils.llm_client import call_llm, generate_pandas_code, generate_clean_code, generate_sql
+from app.utils.llm_client import call_llm, generate_pandas_code, generate_pandas_code_with_context, generate_clean_code, generate_sql
 from app.utils.safe_executor import execute_pandas_code
 from app.utils.chart_generator import generate_chart_config
 from app.utils.intent_classifier import IntentClassifier
@@ -620,18 +620,47 @@ def process_query(state: typing_state) -> typing_state:
                 'columns': state.get('columns', []),
                 'sample_rows': original_data.head(3).to_dict('records')
             }
-            code = generate_pandas_code(df_info, state.get('user_query', ''), history)
+            
+            # 获取上一次的计算结果（用于上下文连续性）
+            last_result = state.get("last_result")
+            last_columns = state.get("last_result_columns", [])
+            
+            # 使用带上下文的代码生成（当有历史结果时）
+            if last_result and last_columns:
+                code = generate_pandas_code_with_context(
+                    df_info, state.get('user_query', ''), history,
+                    model_id=model_id,
+                    last_result=last_result,
+                    last_columns=last_columns
+                )
+            else:
+                code = generate_pandas_code(df_info, state.get('user_query', ''), history)
+
+            # 构建额外变量注入执行环境
+            exec_extra_vars = {}
+            if last_result and last_columns:
+                try:
+                    exec_extra_vars["last_result"] = pd.DataFrame(last_result, columns=last_columns)
+                except Exception:
+                    pass
 
             # 执行代码（若LLM生成空/异常代码，则回退到直接用原数据，避免整条链路报错）
             try:
                 if not code or not code.strip():
                     raise RuntimeError("生成代码为空")
-                result = execute_pandas_code(code, original_data)
+                result = execute_pandas_code(code, original_data, extra_vars=exec_extra_vars)
             except Exception as exec_err:
                 state['error'] = f"数据查询失败: {str(exec_err)}"
                 result = original_data
 
             state['analysis_result'] = result
+            
+            # 持久化本次结果供下次对话使用
+            try:
+                state['last_result'] = result.to_dict('records')
+                state['last_result_columns'] = result.columns.tolist() if hasattr(result, 'columns') else []
+            except Exception:
+                pass
 
             # 生成文本分析结果
             analysis_summary = ""

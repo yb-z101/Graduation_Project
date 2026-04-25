@@ -252,6 +252,62 @@ def generate_pandas_code(df_info: dict, user_query: str, history: list = None, m
     code = call_llm(model_id, prompt)
     return clean_code_output(code)
 
+def generate_pandas_code_with_context(df_info: dict, user_query: str, history: list = None,
+                                       model_id: str = "ali-qwen",
+                                       last_result=None, last_columns=None) -> str:
+    col_desc = "\n".join([f"- {c['name']} ({c['type']})" for c in df_info['columns']])
+    sample_rows = df_info.get('sample_rows', [])
+    sample_desc = "示例数据前3行：\n" + "\n".join([str(row) for row in sample_rows]) if sample_rows else "无示例数据"
+
+    history_text = ""
+    if history:
+        recent = history[-5:]
+        history_lines = []
+        for h in recent:
+            prefix = "用户" if h.get('role') == 'user' else "助手"
+            content = h.get('content', '')
+            if len(content) > 300:
+                content = content[:300] + "..."
+            history_lines.append(f"{prefix}: {content}")
+        if history_lines:
+            history_text = "历史对话：\n" + "\n".join(history_lines) + "\n\n"
+
+    context_hint = ""
+    if last_result and last_columns:
+        preview_lines = []
+        for row in last_result[:5]:
+            preview_lines.append(str(dict(zip(last_columns, [row.get(c, '') for c in last_columns]))))
+        context_hint = f"""
+【重要 - 上一次分析结果可用】
+用户之前的分析产生了一个中间结果，已存储在变量 `last_result` 中（pandas DataFrame）。
+该结果的列：{', '.join(last_columns)}
+数据预览（前5行）：
+{chr(10).join(preview_lines)}
+
+如果当前问题需要基于之前的结果继续分析（如"根据上面的结果画图"、"进一步筛选"、"排序"等），请直接使用 `last_result` 变量作为数据源。
+如果当前问题是全新的独立分析（如"计算XX"、"统计YY"），请忽略 `last_result`，使用原始 `df` 变量。
+"""
+
+    prompt = f"""
+你是一个Python数据分析专家。用户有一个pandas DataFrame，包含以下列：
+{col_desc}
+
+{sample_desc}
+
+{history_text}
+{context_hint}
+用户现在想进行以下分析：{user_query}
+
+请生成pandas代码来完成这个分析。要求：
+1. 代码必须将最终结果赋值给变量 `result`，`result` 必须是一个pandas DataFrame。
+2. 可用变量：`df`（原始完整数据）、`last_result`（上次的计算结果，如适用）
+3. 仅使用pandas和Python内置函数，不要导入其他模块。
+4. 代码应简洁高效，只包含必要的操作。
+5. 不要包含任何解释性文字，只返回纯Python代码。
+"""
+    code = call_llm(model_id, prompt)
+    return clean_code_output(code)
+
 def generate_clean_code(df_info: dict, clean_instruction: str, history: list = None, model_id: str = "ali-qwen") -> str:
     """
     根据用户清洗指令生成 pandas 清洗代码。

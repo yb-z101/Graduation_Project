@@ -254,7 +254,9 @@ async def send_message(session_id: str, message: str, model_id: str, db: Session
         "history": session_data.get("history", []),
         "sql_content": session_data.get("sql_content"),
         "sql_result": session_data.get("sql_result"),
-        "model_id": model_id
+        "model_id": model_id,
+        "last_result": session_data.get("last_result"),
+        "last_result_columns": session_data.get("last_result_columns", [])
     }
 
     # 执行工作流
@@ -265,7 +267,8 @@ async def send_message(session_id: str, message: str, model_id: str, db: Session
         session_data["history"] = []
     session_data["history"] = result.get("history", [])
     if result.get("analysis_result") is not None:
-        session_data["last_result"] = result.get("analysis_result").to_dict()
+        session_data["last_result"] = result.get("last_result", result.get("analysis_result").to_dict(orient="records"))
+        session_data["last_result_columns"] = result.get("last_result_columns", list(result.get("analysis_result").columns) if hasattr(result.get("analysis_result"), "columns") else [])
 
     # 保存聊天记录
     # 创建分析任务
