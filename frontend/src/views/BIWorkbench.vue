@@ -204,7 +204,8 @@ const modelList = ref([
   { id: 'ali-qwen', name: '阿里云 Qwen Turbo' },
   { id: 'deepseek', name: 'DeepSeek R1' },
   { id: 'volcengine', name: '火山引擎 Doubao' },
-  { id: 'spark', name: '星火大模型' }
+  { id: 'spark', name: '星火大模型' },
+  { id: 'zhipu', name: '智谱清言 GLM' }
 ])
 
 const messages = ref([])

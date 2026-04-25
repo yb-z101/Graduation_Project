@@ -146,6 +146,36 @@ def call_spark(prompt: str, retries: int = 3) -> str:
             time.sleep(2)  # 等待2秒后重试
 
 
+def call_zhipu(prompt: str, retries: int = 3) -> str:
+    if not settings.llm.zhipu_api_key:
+        return "错误：未配置智谱清言API密钥"
+    
+    headers = {
+        "Authorization": f"Bearer {settings.llm.zhipu_api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    data = {
+        "model": "glm-4-flash",
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.7,
+        "max_tokens": 1024
+    }
+    
+    for attempt in range(retries):
+        try:
+            response = requests.post(settings.llm.zhipu_api_url, json=data, headers=headers, timeout=60)
+            response.raise_for_status()
+            result = response.json()
+            return result.get("choices", [{}])[0].get("message", {}).get("content", f"返回格式异常：{result}")
+        except Exception as e:
+            if attempt == retries - 1:
+                return f"调用大模型失败：{str(e)}"
+            time.sleep(2)
+
+
 def call_llm(model_id: str, prompt: str, retries: int = 3) -> str:
     """
     统一调用大模型的接口
@@ -159,6 +189,8 @@ def call_llm(model_id: str, prompt: str, retries: int = 3) -> str:
         return call_volcengine(prompt, retries)
     elif model_id == "spark":
         return call_spark(prompt, retries)
+    elif model_id == "zhipu":
+        return call_zhipu(prompt, retries)
     else:
         return f"错误：不支持的模型ID：{model_id}"
 

@@ -38,6 +38,10 @@ class LLMSettings(BaseSettings):
     spark_api_key: str = os.getenv("SPARK_API_KEY", "")
     spark_api_secret: str = os.getenv("SPARK_API_SECRET", "")
     spark_api_url: str = "https://spark-api-open.xf-yun.com/v2/chat/completions"
+    
+    # 智谱清言模型配置
+    zhipu_api_key: str = os.getenv("ZHIPU_API_KEY", "aca547b993d8455eaf8aac5f9ff23bde.OuHbLCuvVR7l6QJD")
+    zhipu_api_url: str = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
 
 
 class AppSettings(BaseSettings):
