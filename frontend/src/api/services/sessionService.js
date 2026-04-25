@@ -106,7 +106,7 @@ const sessionService = {
 
   getInsights: (sessionId, modelId = 'ali-qwen') => {
     return apiClient({
-      url: `/sessions/${sessionId}/insights`,
+      url: `/v1/sessions/${sessionId}/insights`,
       method: 'get',
       params: { model_id: modelId },
       timeout: 60000
