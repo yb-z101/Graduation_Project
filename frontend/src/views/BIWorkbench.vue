@@ -409,6 +409,9 @@ const handleSendMessage = async (text) => {
             upsertTab(tableName, 'table', tableData.data)
           })
         }
+        else if (response.display_result && response.display_result.length > 0) {
+          upsertTab('分析结果', 'table', response.display_result)
+        }
         else if (response.result) {
           let title = response.current_table_name || '分析结果'
           upsertTab(title, 'table', response.result)

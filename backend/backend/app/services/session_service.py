@@ -391,6 +391,8 @@ async def send_message(session_id: str, message: str, model_id: str, db: Session
         "message": "消息处理成功",
         "task_id": db_task.id,
         "result": analysis_result_dict,
+        "display_result": result.get("display_result"),
+        "display_columns": result.get("display_columns", []),
         "chart_option": result.get("chart_option"),
         "error": result.get("error"),
         "analysis_summary": result.get("analysis_summary"),

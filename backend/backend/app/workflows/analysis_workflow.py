@@ -813,6 +813,28 @@ def process_query(state: typing_state) -> typing_state:
         
         state['analysis_summary'] = analysis_summary
 
+        # 智能选择分析结果区展示的数据
+        from app.utils.response_parser import extract_tables_from_text, pick_best_display_data
+        try:
+            extracted = extract_tables_from_text(analysis_summary)
+            display_df = pick_best_display_data(
+                extracted,
+                state.get('analysis_result'),
+                original_data if original_data is not None else pd.DataFrame()
+            )
+            if display_df is not None:
+                state['display_result'] = display_df.to_dict('records')
+                state['display_columns'] = display_df.columns.tolist()
+                print(f"[DISPLAY] 分析结果区将展示: {len(display_df)}行 × {len(display_df.columns)}列 | 来源: {'文本提取' if extracted else '代码执行'}")
+            else:
+                state['display_result'] = None
+                state['display_columns'] = []
+                print(f"[DISPLAY] 分析结果区不展示（结果为全量数据或无结构化数据）")
+        except Exception as e:
+            print(f"[DISPLAY] 智能选择失败: {e}")
+            state['display_result'] = None
+            state['display_columns'] = []
+
         # 添加到历史记录
         history.append({
             'role': 'user',
