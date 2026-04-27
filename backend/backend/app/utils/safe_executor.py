@@ -11,9 +11,15 @@ def execute_pandas_code(code: str, df: pd.DataFrame, extra_vars: dict = None) ->
     安全执行 pandas 代码，返回结果 DataFrame。
     限制：只允许 pandas、numpy 和内置函数，禁用危险操作。
     """
-    # 检查代码中是否包含危险操作
+    # 先清理已知的无害import语句（因为safe_globals中已经提供了这些模块）
+    code = code.replace('import pandas as pd', '')
+    code = code.replace('import numpy as np', '')
+    code = code.replace('import pandas', '')
+    code = code.replace('import numpy', '')
+
+    # 检查代码中是否包含危险操作（在清理无害import之后检查）
     dangerous_patterns = [
-        r'import\s+',
+        r'import\s+',           # 清理后仍存在其他import则拦截
         r'open\s*\(',
         r'eval\s*\(',
         r'exec\s*\(',
@@ -22,7 +28,6 @@ def execute_pandas_code(code: str, df: pd.DataFrame, extra_vars: dict = None) ->
         r'subprocess\.',
         r'sys\.',
         r'file\.',
-        r'open\s*\(',
         r'write\s*\(',
         r'read\s*\(',
         r'input\s*\(',
@@ -77,12 +82,6 @@ def execute_pandas_code(code: str, df: pd.DataFrame, extra_vars: dict = None) ->
 
     local_vars = {}
     try:
-        # 移除代码中的 import 语句，因为我们已经在 safe_globals 中提供了必要的模块
-        code = code.replace('import pandas as pd', '')
-        code = code.replace('import numpy as np', '')
-        code = code.replace('import pandas', '')
-        code = code.replace('import numpy', '')
-        
         # 打印处理后的代码，用于调试
         print(f"处理后的代码: {code}")
         

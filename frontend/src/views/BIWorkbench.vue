@@ -306,13 +306,38 @@ const handleSendMessage = async (text) => {
       return false
     })
   }
+
+  const isFullData = (data) => {
+    if (!data || !Array.isArray(data) || data.length === 0) return false
+    const currentSession = sessionStore.sessions.find(s => s.id === sessionStore.currentSessionId)
+    if (!currentSession) return false
+    const totalRows = currentSession.rowCount || 0
+    if (totalRows === 0) return false
+    return data.length >= totalRows * 0.9
+  }
   
-  const upsertTab = (title, type, data, chartOption = null) => {
+  const upsertTab = (title, type, data, chartOption = null, protectExisting = false) => {
     const existingIndex = findExistingTab(title, type)
     if (existingIndex > -1) {
-      workspaceTabs.value[existingIndex].data = data
-      if (chartOption) workspaceTabs.value[existingIndex].chartOption = chartOption
-      activeWorkspaceTab.value = workspaceTabs.value[existingIndex].id
+      if (protectExisting) {
+        const existingTab = workspaceTabs.value[existingIndex]
+        const existingIsFull = isFullData(existingTab.data)
+        const newIsFull = isFullData(data)
+        if (existingIsFull && !newIsFull) {
+          workspaceTabs.value[existingIndex].data = data
+          if (chartOption) workspaceTabs.value[existingIndex].chartOption = chartOption
+        } else if (!existingIsFull && newIsFull) {
+          // 已有筛选数据，新数据是全量，不覆盖
+        } else {
+          workspaceTabs.value[existingIndex].data = data
+          if (chartOption) workspaceTabs.value[existingIndex].chartOption = chartOption
+        }
+        activeWorkspaceTab.value = workspaceTabs.value[existingIndex].id
+      } else {
+        workspaceTabs.value[existingIndex].data = data
+        if (chartOption) workspaceTabs.value[existingIndex].chartOption = chartOption
+        activeWorkspaceTab.value = workspaceTabs.value[existingIndex].id
+      }
     } else {
       const tabId = `${type}-${Date.now()}`
       const tab = { id: tabId, title, type, data }
@@ -321,16 +346,30 @@ const handleSendMessage = async (text) => {
       activeWorkspaceTab.value = tabId
     }
   }
+
+  const isContextContinuation = (query) => {
+    const contextKeywords = [
+      '刚才', '刚刚', '上次', '上面', '之前的', '上一步',
+      '取上一步', '根据上面', '基于刚才', '之前的结果', '根据刚才',
+      '将刚才', '把刚才', '把上面', '将上面', '把之前', '将之前',
+      '用表格', '展示出来', '显示出来',
+      '排序', '从高到低', '从低到高', '升序', '降序',
+      '这个', '这些', '那', '那些', '其中', '当中的',
+    ]
+    return contextKeywords.some(k => query.includes(k))
+  }
   
   messages.value.push({ role: 'user', content: text })
   chatStore.setLoading(true)
   executionProcessLog.value = []
   
+  const isContinuation = isContextContinuation(text)
+  const chartKeywords = ["图表", "画图", "可视化", "折线图", "柱状图", "饼图"]
+  const wantsChart = chartKeywords.some(k => text.includes(k))
+  
   try {
     const currentSession = sessionStore.sessions.find(s => s.id === sessionStore.currentSessionId)
     const isDatabaseSession = currentSession?.isDatabase
-    
-    const chartKeywords = ["图表", "画图", "可视化", "折线图", "柱状图", "饼图"]
     
     if (isDatabaseSession && currentSession?.connectionId) {
       const chatToSqlResponse = await databaseService.chatToSql(currentSession.connectionId, text)
@@ -353,7 +392,6 @@ const handleSendMessage = async (text) => {
           
           let analysisSummary = `查询成功，共 ${queryResult.row_count} 条数据`
           
-          const wantsChart = chartKeywords.some(k => text.includes(k))
           if (wantsChart) {
             try {
               import('@/utils/chartGenerator').then(module => {
@@ -402,26 +440,56 @@ const handleSendMessage = async (text) => {
           content: response.analysis_summary || '分析完成'
         })
         
+        // Tab管理逻辑：区分母问题和子问题
+        const isResponseContinuation = response.is_context_continuation || isContinuation
+        
         if (response.is_multi_table_response && response.multi_table_data) {
           const tableNames = Object.keys(response.multi_table_data)
           tableNames.forEach((tableName, index) => {
             const tableData = response.multi_table_data[tableName]
-            upsertTab(tableName, 'table', tableData.data)
+            upsertTab(tableName, 'table', tableData.data, null, false)
           })
         }
         else if (response.display_result && response.display_result.length > 0) {
-          upsertTab('分析结果', 'table', response.display_result)
-        }
-        else if (response.result && response.result.length > 0) {
-          const isFullDataFallback = response.total_rows && response.result.length >= response.total_rows * 0.9
-          if (!isFullDataFallback) {
-            let title = response.current_table_name || '分析结果'
-            upsertTab(title, 'table', response.result)
+          // 有智能筛选后的展示数据
+          if (isResponseContinuation && wantsChart) {
+            // 子问题+图表请求：不更新表格Tab，只新增图表Tab
+          } else if (isResponseContinuation) {
+            // 子问题+非图表请求：用protectExisting保护已有筛选数据不被全量覆盖
+            upsertTab('分析结果', 'table', response.display_result, null, true)
+          } else {
+            // 母问题：正常创建/更新Tab
+            upsertTab('分析结果', 'table', response.display_result)
           }
         }
+        else if (response.result && response.result.length > 0) {
+          // 没有display_result，只有原始result
+          const isFullDataFallback = response.total_rows 
+            ? response.result.length >= response.total_rows * 0.9 
+            : isFullData(response.result)
+          
+          if (!isFullDataFallback) {
+            let title = response.current_table_name || '分析结果'
+            if (isResponseContinuation && wantsChart) {
+              // 子问题+图表请求：不更新表格Tab
+            } else {
+              upsertTab(title, 'table', response.result, null, isResponseContinuation)
+            }
+          }
+          // 全量数据不展示在Tab中
+        }
         
+        // 图表Tab：始终新增，不覆盖已有表格Tab
         if (response.chart_option) {
-          upsertTab(`图表-${text.slice(0, 10)}`, 'chart', null, response.chart_option)
+          const chartTabId = `chart-${Date.now()}`
+          workspaceTabs.value.push({
+            id: chartTabId,
+            title: `图表-${text.slice(0, 10)}`,
+            type: 'chart',
+            data: null,
+            chartOption: response.chart_option
+          })
+          activeWorkspaceTab.value = chartTabId
         }
       }
     }

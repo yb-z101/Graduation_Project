@@ -291,19 +291,35 @@ def generate_pandas_code_with_context(df_info: dict, user_query: str, history: l
 数据预览：
 {chr(10).join(preview_lines)}
 
-【强制规则 - 代码第一行必须遵循】
-当用户问题中出现以下任一关键词时，你的代码**第一行必须是 result = last_result.xxx(...)**，绝对不能写 result = df.xxx(...)：
-  - "取上一步"、"根据上面"、"基于刚才"、"之前的结果"
-  - "排名前N"、"前几名"、"筛选出"、"继续"
-  - "这几类"、"这些数据"、"它们的"
+【强制规则 - 默认使用last_result】
+由于用户当前问题是对上一次结果的延续操作，你的代码**默认必须基于 `last_result` 进行操作**。
+
+具体规则：
+1. 代码第一行应使用 `result = last_result.xxx(...)`，而不是 `result = df.xxx(...)`
+2. 只有当用户明确要求"从原始数据重新分析"或"查看全部数据"时，才使用 df 变量
+3. 以下表达都意味着使用 last_result：
+   - "刚才"、"刚刚"、"上次"、"上面"、"之前的"、"上一步"
+   - "取上一步"、"根据上面"、"基于刚才"、"之前的结果"、"根据刚才"
+   - "排名前N"、"前几名"、"筛选出"、"继续"
+   - "这几类"、"这些数据"、"它们的"
+   - "将刚才"、"把刚才"、"把上面"、"将上面"
+   - "用表格展示"、"展示出来"、"显示出来"
+   - "排序"、"按XX排序"、"从高到低"、"从低到高"
+   - "画图"、"图表"、"可视化"、"柱状图"、"折线图"、"饼图"
+   - "这个"、"这些"、"那"、"那些"、"其中"、"当中的"
 
 【代码模板（必须参考）】
   result = last_result.head(N)              # 取前N行
   result = last_result.sort_values('列名')   # 排序
   result = last_result[['列1','列2']]        # 选列
   result = last_result[last_result['列']>值] # 筛选
+  result = last_result.reset_index(drop=True) # 重置索引后选列/排序
 
-只有当用户提出完全全新的独立分析需求时，才使用原始 df 变量。
+【常见错误示例（禁止）】
+  ❌ result = df[df['单价']>500]  # 应该用 last_result 而非 df
+  ❌ result = df.sort_values('金额')  # 应该用 last_result 而非 df
+  ✅ result = last_result.sort_values('金额', ascending=False)  # 正确
+  ✅ result = last_result[['名称','单价','库存量']]  # 正确
 """
 
     prompt = f"""

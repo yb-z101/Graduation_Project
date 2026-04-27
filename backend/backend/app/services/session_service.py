@@ -263,18 +263,47 @@ async def send_message(session_id: str, message: str, model_id: str, db: Session
     _lrc = state.get("last_result_columns")
     print(f"[CONTEXT-DEBUG] 消息接收: '{message[:40]}...' | last_result: {'有' + str(len(_lr)) + '行' if _lr else '无'} | last_result_columns: {_lrc}")
 
-    # 执行工作流
-    result = await analysis_workflow.ainvoke(state)
+    # 执行工作流（增加超时保护）
+    import asyncio
+    try:
+        result = await asyncio.wait_for(analysis_workflow.ainvoke(state), timeout=90.0)
+    except asyncio.TimeoutError:
+        return {
+            "status": "error",
+            "message": "分析超时，请简化您的问题或稍后重试",
+            "task_id": None,
+            "result": None,
+            "display_result": None,
+            "display_columns": [],
+            "chart_option": None,
+            "error": "分析超时（90秒），请简化问题或重试",
+            "analysis_summary": "分析超时，请简化您的问题或稍后重试",
+            "generated_sql": None,
+            "execution_log": [{"node": "超时", "status": "error", "description": "分析超时（90秒）", "timestamp": datetime.now().isoformat(timespec='seconds')}],
+            "is_multi_table_response": False,
+            "multi_table_data": None,
+            "current_table_name": None,
+            "total_rows": None,
+            "displayed_rows": None,
+            "is_context_continuation": False
+        }
 
     # 更新会话历史
     if not session_data.get("history"):
         session_data["history"] = []
     session_data["history"] = result.get("history", [])
-    if result.get("analysis_result") is not None:
-        _new_lr = result.get("last_result")
-        session_data["last_result"] = _new_lr if _new_lr else result.get("analysis_result").to_dict(orient="records")
-        session_data["last_result_columns"] = result.get("last_result_columns", list(result.get("analysis_result").columns) if hasattr(result.get("analysis_result"), "columns") else [])
-        print(f"[CONTEXT-DEBUG] 结果保存: last_result={'有' + str(len(session_data['last_result'])) + '行' if session_data.get('last_result') else '无'} | columns={session_data.get('last_result_columns')}")
+    
+    # 更新last_result：优先使用工作流返回的last_result，其次使用analysis_result
+    if result.get("last_result") is not None:
+        session_data["last_result"] = result.get("last_result")
+        session_data["last_result_columns"] = result.get("last_result_columns", [])
+    elif result.get("analysis_result") is not None:
+        try:
+            session_data["last_result"] = result.get("analysis_result").to_dict(orient="records")
+            session_data["last_result_columns"] = list(result.get("analysis_result").columns) if hasattr(result.get("analysis_result"), "columns") else []
+        except Exception:
+            pass
+    print(f"[CONTEXT-DEBUG] 结果保存: last_result={'有' + str(len(session_data.get('last_result', []))) + '行' if session_data.get('last_result') else '无'} | columns={session_data.get('last_result_columns')}")
 
     # 保存聊天记录
     # 创建分析任务
@@ -398,12 +427,12 @@ async def send_message(session_id: str, message: str, model_id: str, db: Session
         "analysis_summary": result.get("analysis_summary"),
         "generated_sql": result.get("generated_sql"),
         "execution_log": execution_log,
-        # 多表数据支持
         "is_multi_table_response": result.get("is_multi_table_response", False),
         "multi_table_data": result.get("multi_table_data", None),
         "current_table_name": result.get("current_table_name", None),
         "total_rows": result.get("total_rows", None),
-        "displayed_rows": result.get("displayed_rows", None)
+        "displayed_rows": result.get("displayed_rows", None),
+        "is_context_continuation": result.get("is_context_continuation", False)
     }
 
 

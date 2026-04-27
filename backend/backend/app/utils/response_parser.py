@@ -77,22 +77,45 @@ def extract_tables_from_text(text: str) -> List[pd.DataFrame]:
 def pick_best_display_data(
     extracted_tables: List[pd.DataFrame],
     code_result: pd.DataFrame,
-    original_data: pd.DataFrame
+    original_data: pd.DataFrame,
+    full_data_threshold: float = 0.9
 ) -> Optional[pd.DataFrame]:
     if extracted_tables:
         best = max(extracted_tables, key=lambda df: len(df.columns) * len(df))
+        if original_data is not None and not original_data.empty:
+            try:
+                ratio = len(best) / len(original_data)
+                same_cols = set(best.columns) == set(original_data.columns)
+                if ratio >= full_data_threshold and same_cols:
+                    return None
+            except Exception:
+                pass
         return best
 
     if code_result is not None and not code_result.empty:
-        try:
-            is_same_as_original = (
-                len(code_result) == len(original_data) and
-                set(code_result.columns) == set(original_data.columns)
-            )
-        except Exception:
-            is_same_as_original = False
+        if original_data is None or original_data.empty:
+            return code_result
 
-        if not is_same_as_original:
+        try:
+            same_len = len(code_result) == len(original_data)
+            same_cols = set(code_result.columns) == set(original_data.columns)
+
+            if same_len and same_cols:
+                try:
+                    code_sorted = code_result.sort_values(by=list(code_result.columns)).reset_index(drop=True)
+                    orig_sorted = original_data.sort_values(by=list(original_data.columns)).reset_index(drop=True)
+                    if code_sorted.equals(orig_sorted):
+                        return None
+                except Exception:
+                    pass
+                return None
+
+            ratio = len(code_result) / len(original_data)
+            if ratio >= full_data_threshold and same_cols:
+                return None
+
+            return code_result
+        except Exception:
             return code_result
 
     return None

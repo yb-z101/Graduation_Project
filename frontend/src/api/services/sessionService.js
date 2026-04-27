@@ -24,7 +24,8 @@ const sessionService = {
       data: formData,
       headers: {
         'Content-Type': 'multipart/form-data'
-      }
+      },
+      timeout: 90000
     });
   },
 

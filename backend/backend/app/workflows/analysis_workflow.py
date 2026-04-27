@@ -179,6 +179,35 @@ def generate_intent_specific_prompt(intent_type: str, intent_config: dict,
 
 
 # 定义工作流节点
+def _is_context_continuation(user_query: str, history: list, last_result) -> bool:
+    """判断当前问题是否为上下文延续性提问（子问题）"""
+    if not last_result or not history:
+        return False
+    context_keywords = [
+        '刚才', '刚刚', '上次', '上面', '之前的', '之前的', '上一步', '前一步',
+        '刚才的', '刚刚的', '上次的', '上面的', '之前的', '之前的',
+        '取上一步', '根据上面', '基于刚才', '之前的结果', '根据刚才',
+        '排名前', '前几名', '筛选出', '继续', '这几类', '这些数据', '它们的',
+        '用表格', '展示', '显示', '画图', '图表', '可视化', '柱状图', '折线图', '饼图',
+        '排序', '按', '从高到低', '从低到高', '升序', '降序',
+        '将刚才', '把刚才', '把上面', '将上面', '把之前', '将之前',
+        '这个', '这些', '那', '那些', '其中', '当中的',
+    ]
+    query_lower = user_query.lower()
+    for kw in context_keywords:
+        if kw in query_lower:
+            return True
+    if history:
+        last_user_msg = ''
+        for h in reversed(history):
+            if h.get('role') == 'user':
+                last_user_msg = h.get('content', '')
+                break
+        if last_user_msg and len(last_user_msg) > 5:
+            return True
+    return False
+
+
 def process_query(state: typing_state) -> typing_state:
     """处理用户查询"""
     try:
@@ -188,8 +217,16 @@ def process_query(state: typing_state) -> typing_state:
         
         # 获取用户查询、历史记录和模型ID
         user_query = state.get('user_query', '').lower()
+        user_query_original = state.get('user_query', '')
         history = state.get('history', [])
-        model_id = state.get('model_id', 'ali-qwen')  # 默认使用阿里云 Qwen 模型
+        model_id = state.get('model_id', 'ali-qwen')
+        
+        # 获取上下文信息
+        last_result = state.get("last_result")
+        last_result_columns = state.get("last_result_columns", [])
+        is_continuation = _is_context_continuation(user_query_original, history, last_result)
+        state['is_context_continuation'] = is_continuation
+        print(f"[CONTEXT-DEBUG] 上下文判断: is_continuation={is_continuation} | has_last_result={bool(last_result)} | query='{user_query_original[:40]}'")
         
         # 识别非数据分析类问题
         non_analysis_keywords = ['你好', '您好', 'hi', 'hello', '早上好', '下午好', '晚上好', '谢谢', '再见', '拜拜', '你是谁', '你叫什么', '介绍一下自己']
@@ -257,9 +294,63 @@ def process_query(state: typing_state) -> typing_state:
                 table_names = list(tables.keys())
                 total_tables = len(table_names)
 
-                # 🆕 数据完整性校验
+                # 数据完整性校验
                 total_rows_in_tables = sum(len(t.get('data', [])) for t in tables.values())
                 print(f"[SQL-DEBUG] SQL文件解析完成: {total_tables}个表, 共{total_rows_in_tables}条数据")
+
+                # 上下文延续性提问处理：如果有last_result且判断为子问题，走pandas代码路径
+                if is_continuation and last_result and last_result_columns:
+                    print(f"[SQL-CONTEXT] 检测到上下文延续性提问，走last_result路径")
+                    import pandas as pd
+                    try:
+                        lr_df = pd.DataFrame(last_result, columns=last_result_columns)
+                    except Exception:
+                        lr_df = None
+                    
+                    if lr_df is not None and not lr_df.empty:
+                        df_info = {
+                            'columns': [{'name': c, 'type': str(lr_df[c].dtype)} for c in lr_df.columns],
+                            'sample_rows': lr_df.head(10).to_dict('records'),
+                            'total_rows': len(lr_df)
+                        }
+                        code = generate_pandas_code_with_context(
+                            df_info, user_query_original, history,
+                            model_id=model_id,
+                            last_result=last_result,
+                            last_columns=last_result_columns
+                        )
+                        exec_extra_vars = {"last_result": lr_df}
+                        original_df = original_data if original_data is not None else lr_df
+                        try:
+                            if not code or not code.strip():
+                                raise RuntimeError("生成代码为空")
+                            result = execute_pandas_code(code, original_df, extra_vars=exec_extra_vars)
+                        except Exception as exec_err:
+                            state['error'] = f"数据查询失败: {str(exec_err)}"
+                            result = None
+                        
+                        if result is not None:
+                            state['analysis_result'] = result
+                            is_fallback = (result is original_df) or (len(result) >= len(original_df) * 0.9)
+                            if not is_fallback:
+                                try:
+                                    state['last_result'] = result.to_dict('records')
+                                    state['last_result_columns'] = result.columns.tolist() if hasattr(result, 'columns') else []
+                                except Exception:
+                                    pass
+                            else:
+                                print(f"[SQL-CONTEXT] 本次结果为全量回退（{len(result)}行），保留原有last_result")
+                            
+                            sample = result.head(10).to_string() if result is not None and not result.empty else "无数据"
+                            analysis_summary = call_llm(model_id, f"基于以下数据回答问题：{user_query_original}\n\n数据：\n{sample}")
+                            if not analysis_summary or '调用大模型失败' in analysis_summary:
+                                analysis_summary = f"分析完成，共 {len(result) if result is not None else 0} 条数据"
+                        else:
+                            analysis_summary = "分析执行失败，请重新描述您的问题"
+                        
+                        state['analysis_summary'] = analysis_summary
+                        state['total_rows'] = len(lr_df)
+                        return state
 
                 for tname, tdata in tables.items():
                     actual_rows = len(tdata.get('data', []))
@@ -622,57 +713,94 @@ def process_query(state: typing_state) -> typing_state:
                 'total_rows': len(original_data)
             }
             
-            # 获取上一次的计算结果（用于上下文连续性）
-            last_result = state.get("last_result")
-            last_columns = state.get("last_result_columns", [])
+            state['total_rows'] = len(original_data)
             
-            _use_context = bool(last_result and last_columns)
-            print(f"[CONTEXT-DEBUG] 代码生成: user_query='{state.get('user_query', '')[:30]}...' | has_last_result={_use_context} | rows={len(last_result) if last_result else 0} | cols={last_columns}")
+            _use_context = bool(last_result and last_result_columns)
+            print(f"[CONTEXT-DEBUG] 代码生成: user_query='{user_query_original[:30]}...' | has_last_result={_use_context} | rows={len(last_result) if last_result else 0} | cols={last_result_columns}")
             
             # 使用带上下文的代码生成（当有历史结果时）
-            if last_result and last_columns:
+            if last_result and last_result_columns:
                 code = generate_pandas_code_with_context(
-                    df_info, state.get('user_query', ''), history,
+                    df_info, user_query_original, history,
                     model_id=model_id,
                     last_result=last_result,
-                    last_columns=last_columns
+                    last_columns=last_result_columns
                 )
             else:
-                code = generate_pandas_code(df_info, state.get('user_query', ''), history)
+                code = generate_pandas_code(df_info, user_query_original, history)
 
             # 构建额外变量注入执行环境
             exec_extra_vars = {}
-            if last_result and last_columns:
+            if last_result and last_result_columns:
                 try:
-                    exec_extra_vars["last_result"] = pd.DataFrame(last_result, columns=last_columns)
-                except Exception:
-                    pass
+                    lr_df = pd.DataFrame(last_result, columns=last_result_columns)
+                    exec_extra_vars["last_result"] = lr_df
+                    print(f"[EXEC] last_result已注入执行环境: {len(lr_df)}行 × {list(lr_df.columns)}")
+                except Exception as inject_err:
+                    print(f"[EXEC] 警告: last_result注入失败 ({inject_err})，将尝试用原始df替代")
+                    # 注入失败时不设置last_result，LLM代码如果用到会报错
+                    # 但至少不会崩溃，后续会被 except 捕获
 
-            # 执行代码（若LLM生成空/异常代码，则回退到直接用原数据，避免整条链路报错）
+            # 执行代码（带智能重试：如果last_result相关代码失败，回退到无上下文版本）
+            code_exec_failed = False
+            result = None
+            
             try:
                 if not code or not code.strip():
                     raise RuntimeError("生成代码为空")
                 result = execute_pandas_code(code, original_data, extra_vars=exec_extra_vars)
             except Exception as exec_err:
-                state['error'] = f"数据查询失败: {str(exec_err)}"
-                result = original_data
+                err_msg = str(exec_err)
+                print(f"[EXEC] 第一次执行失败: {err_msg}")
+                
+                # 如果错误是 last_result 未定义，且原本有上下文，尝试用无上下文代码重试
+                if "'last_result'" in err_msg or "'last_result' is not defined" in err_msg:
+                    if last_result and last_result_columns:
+                        print("[EXEC] 检测到last_result未定义错误，尝试用无上下文代码重试...")
+                        try:
+                            fallback_code = generate_pandas_code(df_info, user_query_original, history)
+                            if fallback_code and fallback_code.strip():
+                                result = execute_pandas_code(fallback_code, original_data)
+                                print("[EXEC] 重试成功（使用无上下文代码）")
+                                code_exec_failed = False
+                        except Exception as retry_err:
+                            print(f"[EXEC] 重试也失败: {retry_err}")
+                
+                if result is None:
+                    state['error'] = f"数据查询失败: {exec_err}"
+                    code_exec_failed = True
 
-            state['analysis_result'] = result
+            # 代码执行失败时，analysis_result设为None，避免全量数据泄漏到展示层
+            if code_exec_failed or result is None:
+                state['analysis_result'] = None
+                state['last_result'] = last_result
+                state['last_result_columns'] = last_result_columns
+            else:
+                state['analysis_result'] = result
             
             # 持久化本次结果供下次对话使用
-            # 注意：只有当result不是原始全量数据回退时才更新last_result，避免上下文断裂
-            is_fallback = (result is original_data) or (len(result) >= len(original_data) * 0.9)
-            if not is_fallback:
-                try:
-                    state['last_result'] = result.to_dict('records')
-                    state['last_result_columns'] = result.columns.tolist() if hasattr(result, 'columns') else []
-                except Exception:
-                    pass
+            # 只有代码执行失败时才不更新last_result，正常执行结果无论大小都更新
+            if not code_exec_failed and result is not None:
+                is_exact_fallback = (result is original_data)
+                if not is_exact_fallback:
+                    try:
+                        state['last_result'] = result.to_dict('records')
+                        state['last_result_columns'] = result.columns.tolist() if hasattr(result, 'columns') else []
+                        print(f"[CONTEXT] last_result已更新: {len(result)}行 × {len(result.columns) if hasattr(result, 'columns') else 0}列")
+                    except Exception:
+                        pass
+                else:
+                    print(f"[CONTEXT] 本次结果为原始数据引用（{len(result)}行），保留原有last_result不变")
             else:
-                print(f"[CONTEXT] 本次结果为全量数据回退（{len(result)}行），保留原有last_result不变")
+                print(f"[CONTEXT] 代码执行失败，保留原有last_result不变")
 
             # 生成文本分析结果
             analysis_summary = ""
+            
+            # 代码执行失败时，直接返回错误信息，避免后续对None调用len()
+            if code_exec_failed or result is None:
+                state['analysis_summary'] = state.get('error') or '数据处理执行失败，请重新描述您的问题'
+                return state
             
             # 首先检查用户查询是否包含图表相关关键词
             wants_chart = any(k in user_query for k in ["图表", "画图", "可视化", "折线图", "柱状图", "饼图"])
@@ -801,14 +929,23 @@ def process_query(state: typing_state) -> typing_state:
             else:
                 # 图表请求，不使用硬编码逻辑，让图表生成器处理数据
                 analysis_summary = "已为您生成图表"
-                # 如果result和原始数据相同，使用原始数据以便图表生成器处理
+                # 如果result和原始数据相同，优先使用last_result作为图表数据源
                 try:
-                    same_columns = (
-                        len(result.columns) == len(original_data.columns)
-                        and result.columns.equals(original_data.columns)
-                    )
-                    if len(result) == len(original_data) and same_columns:
-                        state['analysis_result'] = original_data
+                    if result is not None and original_data is not None:
+                        same_columns = (
+                            len(result.columns) == len(original_data.columns)
+                            and result.columns.equals(original_data.columns)
+                        )
+                        if len(result) == len(original_data) and same_columns:
+                            # 结果为全量数据，尝试用last_result替代
+                            if last_result and last_result_columns:
+                                try:
+                                    lr_df = pd.DataFrame(last_result, columns=last_result_columns)
+                                    state['analysis_result'] = lr_df
+                                    print(f"[CHART-DATA] 图表数据从全量切换为last_result: {len(lr_df)}行")
+                                except Exception:
+                                    pass
+                            # 如果没有last_result，保持analysis_result不变（图表生成器会处理）
                 except Exception:
                     pass
         
@@ -818,19 +955,47 @@ def process_query(state: typing_state) -> typing_state:
         from app.utils.response_parser import extract_tables_from_text, pick_best_display_data
         try:
             extracted = extract_tables_from_text(analysis_summary)
+            ar = state.get('analysis_result')
             display_df = pick_best_display_data(
                 extracted,
-                state.get('analysis_result'),
+                ar,
                 original_data if original_data is not None else pd.DataFrame()
             )
+            # 额外检查：如果display_df接近全量数据，不展示
+            if display_df is not None and original_data is not None and not original_data.empty:
+                try:
+                    ratio = len(display_df) / len(original_data)
+                    same_cols = set(display_df.columns) == set(original_data.columns)
+                    if ratio >= 0.9 and same_cols:
+                        print(f"[DISPLAY] display_df接近全量数据（{len(display_df)}/{len(original_data)}={ratio:.1%}），不展示")
+                        display_df = None
+                except Exception:
+                    pass
+
             if display_df is not None:
                 state['display_result'] = display_df.to_dict('records')
                 state['display_columns'] = display_df.columns.tolist()
                 print(f"[DISPLAY] 分析结果区将展示: {len(display_df)}行 × {len(display_df.columns)}列 | 来源: {'文本提取' if extracted else '代码执行'}")
             else:
-                state['display_result'] = None
-                state['display_columns'] = []
-                print(f"[DISPLAY] 分析结果区不展示（结果为全量数据或无结构化数据）")
+                if ar is not None and original_data is not None and not ar.empty:
+                    try:
+                        ratio = len(ar) / len(original_data)
+                        same_cols = set(ar.columns) == set(original_data.columns)
+                        if ratio < 0.9 or not same_cols:
+                            state['display_result'] = ar.to_dict('records')
+                            state['display_columns'] = ar.columns.tolist()
+                            print(f"[DISPLAY] 兜底使用analysis_result: {len(ar)}行 × {len(ar.columns)}列")
+                        else:
+                            state['display_result'] = None
+                            state['display_columns'] = []
+                            print(f"[DISPLAY] 分析结果区不展示（结果为全量数据 {len(ar)}/{len(original_data)}={ratio:.1%}）")
+                    except Exception:
+                        state['display_result'] = None
+                        state['display_columns'] = []
+                else:
+                    state['display_result'] = None
+                    state['display_columns'] = []
+                    print(f"[DISPLAY] 分析结果区不展示（无结构化数据）")
         except Exception as e:
             print(f"[DISPLAY] 智能选择失败: {e}")
             state['display_result'] = None
